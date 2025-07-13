@@ -1,4 +1,7 @@
+from typing import Optional
+
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import SimpleImputer, IterativeImputer
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.utils.validation import check_is_fitted
@@ -16,7 +19,7 @@ class DataImputer(BaseEstimator, TransformerMixin):
             num_estimator: object = None,
             num_constant: float = 0,
             cat_constant: str = 'MISSING',
-            random_state: int = 42,
+            random_state: Optional[int] = None,
             max_iter: int = 10,
             verbose: bool = False
     ):

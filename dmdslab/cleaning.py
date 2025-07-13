@@ -12,7 +12,7 @@ def drop_almost_empty_rows(df: pd.DataFrame, threshold: float = 0.9) -> pd.DataF
 
 
 def drop_almost_const_columns(
-    df: pd.DataFrame, threshold: float = 0.95
+        df: pd.DataFrame, threshold: float = 0.95
 ) -> pd.DataFrame:
     """
     Drop columns that have more than threshold percentage of constant values.
@@ -26,7 +26,7 @@ def drop_almost_const_columns(
 
 
 def drop_duplicates(
-    df: pd.DataFrame, mode: Literal["columns", "rows", "all"] = "all"
+        df: pd.DataFrame, mode: Literal["columns", "rows", "all"] = "all"
 ) -> pd.DataFrame:
     """
     Drop columns that have the same values.
@@ -35,6 +35,19 @@ def drop_duplicates(
     if mode in ("rows", "all"):
         result = result.drop_duplicates()
     if mode in ("columns", "all"):
-        result = result.T.drop_duplicates().T
+        # Преобразуем DataFrame в массив numpy
+        arr = result.to_numpy()
+
+        # Находим уникальные столбцы
+        unique_cols = []
+        seen = set()
+
+        for i in range(arr.shape[1]):
+            col = tuple(arr[:, i])
+            if col not in seen:
+                unique_cols.append(result.columns[i])
+                seen.add(col)
+
+        result = result.loc[:,unique_cols]
 
     return result

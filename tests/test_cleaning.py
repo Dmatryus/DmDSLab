@@ -36,15 +36,21 @@ class TestDataPreprocessing(unittest.TestCase):
 
     def test_drop_duplicates(self):
         # Тестирование удаления дубликатов
-        df_duplicates = pd.DataFrame({"A": [1, 1, 2], "B": [3, 3, 4]})
+        df_duplicates = pd.DataFrame({"A": [1, 1, 2], "B": [3, 3, 4], "C": [1, 1, 2]})
         result = drop_duplicates(df_duplicates, mode="rows")
         self.assertEqual(len(result), 2)  # Ожидаем удаление одной дублирующей строки
 
         result = drop_duplicates(df_duplicates, mode="columns")
-        self.assertEqual(len(result.columns), 2)  # Все столбцы уникальны, изменений нет
+        self.assertEqual(len(result.columns), 2)  # Удаляет дублирующий столбец
 
         result = drop_duplicates(df_duplicates, mode="all")
         self.assertEqual(len(result), 2)  # Удаляются дубликаты строк
+        self.assertEqual(len(result.columns), 2)  # Удаляет дублирующий столбец
+
+
+
+
+
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ class CategoricalEncoder(BaseEstimator, TransformerMixin):
             handle_missing: str = 'value',
             target_smoothing: float = 0.2,
             catboost_a: float = 10.0,
-            random_state: int = 42
+            random_state: Optional[int] = None
     ):
         """
         Расширенный кодировщик категориальных признаков
@@ -43,7 +43,6 @@ class CategoricalEncoder(BaseEstimator, TransformerMixin):
         self.encoder_ = None
         self.feature_names_ = None
         self._validate_parameters()
-
 
     def fit(self, data_split: DataSplit) -> 'CategoricalEncoder':
         X_train = data_split.train.features

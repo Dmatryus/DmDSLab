@@ -13,15 +13,15 @@ from dmdslab.data import DataSplit, ModelData
 
 class DataImputer(BaseEstimator, TransformerMixin):
     def __init__(
-            self,
-            num_strategy: str = 'iterative',
-            cat_strategy: str = 'most_frequent',
-            num_estimator: object = None,
-            num_constant: float = 0,
-            cat_constant: str = 'MISSING',
-            random_state: Optional[int] = None,
-            max_iter: int = 10,
-            verbose: bool = False
+        self,
+        num_strategy: str = "iterative",
+        cat_strategy: str = "most_frequent",
+        num_estimator: object = None,
+        num_constant: float = 0,
+        cat_constant: str = "MISSING",
+        random_state: Optional[int] = None,
+        max_iter: int = 10,
+        verbose: bool = False,
     ):
         """
         Усовершенствованный импьютер с раздельной обработкой признаков
@@ -44,7 +44,7 @@ class DataImputer(BaseEstimator, TransformerMixin):
         self.max_iter = max_iter
         self.verbose = verbose
 
-    def fit(self, data_split: DataSplit) -> 'AdvancedDataImputer':
+    def fit(self, data_split: DataSplit) -> "DataImputer":
         X_train = data_split.train.features
 
         # Определяем типы признаков
@@ -64,36 +64,34 @@ class DataImputer(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, data_split: DataSplit) -> DataSplit:
-        check_is_fitted(self, ['num_imputer_', 'cat_imputer_'])
+        check_is_fitted(self, ["num_imputer_", "cat_imputer_"])
 
         return DataSplit(
             train=self._transform_part(data_split.train),
             tuning=self._transform_part(data_split.tuning),
-            test=self._transform_part(data_split.test)
+            test=self._transform_part(data_split.test),
         )
 
     def _init_numeric_imputer(self):
         """Инициализация импьютера для числовых данных"""
-        if self.num_strategy == 'iterative':
+        if self.num_strategy == "iterative":
             estimator = self.num_estimator or RandomForestRegressor(
                 random_state=self.random_state
             )
             self.num_imputer_ = IterativeImputer(
                 estimator=estimator,
                 max_iter=self.max_iter,
-                random_state=self.random_state
+                random_state=self.random_state,
             )
         else:
             self.num_imputer_ = SimpleImputer(
-                strategy=self.num_strategy,
-                fill_value=self.num_constant
+                strategy=self.num_strategy, fill_value=self.num_constant
             )
 
     def _init_categorical_imputer(self):
         """Инициализация импьютера для категориальных данных"""
         self.cat_imputer_ = SimpleImputer(
-            strategy=self.cat_strategy,
-            fill_value=self.cat_constant
+            strategy=self.cat_strategy, fill_value=self.cat_constant
         )
 
     def _transform_part(self, model_data: ModelData) -> ModelData:
@@ -106,7 +104,7 @@ class DataImputer(BaseEstimator, TransformerMixin):
             X_num = pd.DataFrame(
                 self.num_imputer_.transform(X[self.num_cols_]),
                 columns=self.num_cols_,
-                index=X.index
+                index=X.index,
             )
         else:
             X_num = pd.DataFrame(index=X.index)
@@ -116,7 +114,7 @@ class DataImputer(BaseEstimator, TransformerMixin):
             X_cat = pd.DataFrame(
                 self.cat_imputer_.transform(X[self.cat_cols_]),
                 columns=self.cat_cols_,
-                index=X.index
+                index=X.index,
             )
         else:
             X_cat = pd.DataFrame(index=X.index)
@@ -128,7 +126,4 @@ class DataImputer(BaseEstimator, TransformerMixin):
 
     def get_feature_imputers(self) -> dict:
         """Возвращает информацию о заполнении признаков"""
-        return {
-            'numeric': self.num_imputer_,
-            'categorical': self.cat_imputer_
-        }
+        return {"numeric": self.num_imputer_, "categorical": self.cat_imputer_}

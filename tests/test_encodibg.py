@@ -90,6 +90,7 @@ def test_error_handling(sample_data):
     with pytest.raises(ValueError):
         CategoricalEncoder(method='invalid_method')
 
+
 def test_numeric_columns_untouched(sample_data):
     """Тест неизменности числовых колонок"""
     encoder = CategoricalEncoder(method='ordinal')

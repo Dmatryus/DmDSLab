@@ -64,6 +64,8 @@ jobs:
       package-version: ${{ steps.get-version.outputs.version }}
       can-publish-testpypi: ${{ steps.check-versions.outputs.can-publish-testpypi }}
       can-publish-pypi: ${{ steps.check-versions.outputs.can-publish-pypi }}
+      testpypi-exists: ${{ steps.check-versions.outputs.testpypi-exists }}
+      pypi-exists: ${{ steps.check-versions.outputs.pypi-exists }}
 
     steps:
     - uses: actions/checkout@v4
@@ -85,31 +87,50 @@ jobs:
         VERSION=$(grep "__version__" dmdslab/__init__.py | head -1 | sed 's/.*=.*[\"'\'']\([^\"'\'']*\)[\"'\''].*/\1/')
         echo "📦 Package version: $VERSION"
         echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+        # Debug output
+        echo "::notice title=Package Version::Found version $VERSION"
 
     - name: Check versions on repositories
       id: check-versions
       run: |
         VERSION="${{ steps.get-version.outputs.version }}"
         
+        # Initialize variables
+        CAN_PUBLISH_TESTPYPI="false"
+        CAN_PUBLISH_PYPI="false"
+        TESTPYPI_EXISTS="false"
+        PYPI_EXISTS="false"
+        
         # Check TestPyPI
         echo "🔍 Checking TestPyPI for version $VERSION..."
         if curl -s --fail "https://test.pypi.org/pypi/DmDSLab/$VERSION/json" > /dev/null 2>&1; then
           echo "⚠️ Version $VERSION already exists on TestPyPI"
-          echo "can-publish-testpypi=false" >> $GITHUB_OUTPUT
+          TESTPYPI_EXISTS="true"
         else
           echo "✅ Version $VERSION not found on TestPyPI - can publish"
-          echo "can-publish-testpypi=true" >> $GITHUB_OUTPUT
+          CAN_PUBLISH_TESTPYPI="true"
         fi
         
         # Check PyPI
         echo "🔍 Checking PyPI for version $VERSION..."
         if curl -s --fail "https://pypi.org/pypi/DmDSLab/$VERSION/json" > /dev/null 2>&1; then
           echo "⚠️ Version $VERSION already exists on PyPI"
-          echo "can-publish-pypi=false" >> $GITHUB_OUTPUT
+          PYPI_EXISTS="true"
         else
           echo "✅ Version $VERSION not found on PyPI - can publish"
-          echo "can-publish-pypi=true" >> $GITHUB_OUTPUT
+          CAN_PUBLISH_PYPI="true"
         fi
+        
+        # Set outputs explicitly
+        echo "can-publish-testpypi=$CAN_PUBLISH_TESTPYPI" >> $GITHUB_OUTPUT
+        echo "can-publish-pypi=$CAN_PUBLISH_PYPI" >> $GITHUB_OUTPUT
+        echo "testpypi-exists=$TESTPYPI_EXISTS" >> $GITHUB_OUTPUT
+        echo "pypi-exists=$PYPI_EXISTS" >> $GITHUB_OUTPUT
+        
+        # Debug outputs
+        echo "::notice title=TestPyPI Status::can-publish-testpypi=$CAN_PUBLISH_TESTPYPI, exists=$TESTPYPI_EXISTS"
+        echo "::notice title=PyPI Status::can-publish-pypi=$CAN_PUBLISH_PYPI, exists=$PYPI_EXISTS"
 
     - name: Build package
       run: python -m build
@@ -123,15 +144,23 @@ jobs:
         name: dist
         path: dist/
 
-  # 🎯 Публикация на TestPyPI - только если можно публиковать
+    - name: Debug final outputs
+      run: |
+        echo "📊 Final outputs from build job:"
+        echo "package-version: ${{ steps.get-version.outputs.version }}"
+        echo "can-publish-testpypi: ${{ steps.check-versions.outputs.can-publish-testpypi }}"
+        echo "can-publish-pypi: ${{ steps.check-versions.outputs.can-publish-pypi }}"
+        echo "testpypi-exists: ${{ steps.check-versions.outputs.testpypi-exists }}"
+        echo "pypi-exists: ${{ steps.check-versions.outputs.pypi-exists }}"
+
+  # 🎯 Публикация на TestPyPI - с отладкой и упрощенным условием
   publish-test:
     name: Publish to TestPyPI
     runs-on: ubuntu-latest
     needs: build
     if: |
       github.event_name == 'push' && 
-      github.ref == 'refs/heads/develop' && 
-      needs.build.outputs.can-publish-testpypi == 'true'
+      github.ref == 'refs/heads/develop'
     environment:
       name: testpypi
       url: https://test.pypi.org/project/DmDSLab/
@@ -139,50 +168,56 @@ jobs:
       id-token: write
 
     steps:
+    - name: Debug build outputs
+      run: |
+        echo "🔍 Debugging build outputs:"
+        echo "Event: ${{ github.event_name }}"
+        echo "Ref: ${{ github.ref }}"
+        echo "can-publish-testpypi: '${{ needs.build.outputs.can-publish-testpypi }}'"
+        echo "testpypi-exists: '${{ needs.build.outputs.testpypi-exists }}'"
+        echo "package-version: '${{ needs.build.outputs.package-version }}'"
+        
+        # Check if we should skip
+        if [[ "${{ needs.build.outputs.can-publish-testpypi }}" != "true" ]]; then
+          echo "⚠️ Skipping publication - version already exists on TestPyPI"
+          echo "::warning title=TestPyPI Skip::Version ${{ needs.build.outputs.package-version }} already exists on TestPyPI"
+          exit 0
+        fi
+
     - name: Download build artifacts
+      if: needs.build.outputs.can-publish-testpypi == 'true'
       uses: actions/download-artifact@v4
       with:
         name: dist
         path: dist/
 
     - name: Publish to TestPyPI
+      if: needs.build.outputs.can-publish-testpypi == 'true'
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
         repository-url: https://test.pypi.org/legacy/
         skip-existing: true
 
     - name: Success notification
+      if: needs.build.outputs.can-publish-testpypi == 'true'
       run: |
         echo "🎉 Successfully published DmDSLab v${{ needs.build.outputs.package-version }} to TestPyPI!"
         echo "📦 Install with: pip install -i https://test.pypi.org/simple/ DmDSLab==${{ needs.build.outputs.package-version }}"
 
-  # ⏭️ Информационный job если нельзя публиковать на TestPyPI
-  skip-test:
-    name: Skip TestPyPI (version exists)
-    runs-on: ubuntu-latest
-    needs: build
-    if: |
-      github.event_name == 'push' && 
-      github.ref == 'refs/heads/develop' && 
-      needs.build.outputs.can-publish-testpypi == 'false'
-
-    steps:
-    - name: Version exists notification
+    - name: Skip notification
+      if: needs.build.outputs.can-publish-testpypi != 'true'
       run: |
         echo "ℹ️ Version ${{ needs.build.outputs.package-version }} already exists on TestPyPI"
         echo "🔄 To publish a new version, update the version in dmdslab/__init__.py"
-        echo "📋 Current version: ${{ needs.build.outputs.package-version }}"
-        echo "🔗 Existing package: https://test.pypi.org/project/DmDSLab/${{ needs.build.outputs.package-version }}/"
 
-  # 🎯 Публикация на PyPI - только если можно публиковать
+  # 🎯 Публикация на PyPI - с отладкой и упрощенным условием
   publish-pypi:
     name: Publish to PyPI
     runs-on: ubuntu-latest
     needs: build
     if: |
       github.event_name == 'release' && 
-      github.event.action == 'published' && 
-      needs.build.outputs.can-publish-pypi == 'true'
+      github.event.action == 'published'
     environment:
       name: pypi
       url: https://pypi.org/project/DmDSLab/
@@ -190,6 +225,21 @@ jobs:
       id-token: write
 
     steps:
+    - name: Debug build outputs
+      run: |
+        echo "🔍 Debugging build outputs:"
+        echo "Event: ${{ github.event_name }}"
+        echo "Action: ${{ github.event.action }}"
+        echo "can-publish-pypi: '${{ needs.build.outputs.can-publish-pypi }}'"
+        echo "pypi-exists: '${{ needs.build.outputs.pypi-exists }}'"
+        echo "package-version: '${{ needs.build.outputs.package-version }}'"
+        
+        # Check if we should fail
+        if [[ "${{ needs.build.outputs.can-publish-pypi }}" != "true" ]]; then
+          echo "❌ Cannot publish - version already exists on PyPI!"
+          exit 1
+        fi
+
     - name: Download build artifacts
       uses: actions/download-artifact@v4
       with:
@@ -204,30 +254,11 @@ jobs:
         echo "🚀 Successfully published DmDSLab v${{ needs.build.outputs.package-version }} to PyPI!"
         echo "📦 Install with: pip install DmDSLab==${{ needs.build.outputs.package-version }}"
 
-  # ⏭️ Ошибка если нельзя публиковать на PyPI
-  skip-pypi:
-    name: Skip PyPI (version exists)
-    runs-on: ubuntu-latest
-    needs: build
-    if: |
-      github.event_name == 'release' && 
-      github.event.action == 'published' && 
-      needs.build.outputs.can-publish-pypi == 'false'
-
-    steps:
-    - name: Version exists error
-      run: |
-        echo "❌ Version ${{ needs.build.outputs.package-version }} already exists on PyPI!"
-        echo "🔄 Please update the version in dmdslab/__init__.py before creating a release"
-        echo "📋 Current version: ${{ needs.build.outputs.package-version }}"
-        echo "🔗 Existing package: https://pypi.org/project/DmDSLab/${{ needs.build.outputs.package-version }}/"
-        exit 1  # Fail the workflow to indicate the issue
-
-  # 📊 Сводная информация
+  # 📊 Сводная информация - всегда выполняется
   summary:
     name: Build Summary
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [build, publish-test, publish-pypi]
     if: always() && (needs.build.result == 'success')
 
     steps:
@@ -237,37 +268,40 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Package Version:** ${{ needs.build.outputs.package-version }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### Repository Status:" >> $GITHUB_STEP_SUMMARY
         
-        if [[ "${{ needs.build.outputs.can-publish-testpypi }}" == "true" ]]; then
-          echo "- **TestPyPI:** ✅ Available for publication" >> $GITHUB_STEP_SUMMARY
-        else
-          echo "- **TestPyPI:** ⚠️ Version already exists" >> $GITHUB_STEP_SUMMARY
-        fi
-        
-        if [[ "${{ needs.build.outputs.can-publish-pypi }}" == "true" ]]; then
-          echo "- **PyPI:** ✅ Available for publication" >> $GITHUB_STEP_SUMMARY
-        else
-          echo "- **PyPI:** ⚠️ Version already exists" >> $GITHUB_STEP_SUMMARY
-        fi
-        
+        echo "### Status Check Results:" >> $GITHUB_STEP_SUMMARY
+        echo "- **TestPyPI exists:** ${{ needs.build.outputs.testpypi-exists }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **PyPI exists:** ${{ needs.build.outputs.pypi-exists }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### Actions Taken:" >> $GITHUB_STEP_SUMMARY
         
-        if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/develop" ]]; then
-          if [[ "${{ needs.build.outputs.can-publish-testpypi }}" == "true" ]]; then
-            echo "- 🚀 **TestPyPI publication triggered**" >> $GITHUB_STEP_SUMMARY
+        echo "### Publication Results:" >> $GITHUB_STEP_SUMMARY
+        
+        # TestPyPI status
+        if [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+          if [[ "${{ needs.publish-test.result }}" == "success" ]]; then
+            if [[ "${{ needs.build.outputs.can-publish-testpypi }}" == "true" ]]; then
+              echo "✅ **TestPyPI:** Published successfully" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "⏭️ **TestPyPI:** Skipped (version exists)" >> $GITHUB_STEP_SUMMARY
+            fi
           else
-            echo "- ⏭️ **TestPyPI publication skipped** (version exists)" >> $GITHUB_STEP_SUMMARY
+            echo "❌ **TestPyPI:** Failed or skipped" >> $GITHUB_STEP_SUMMARY
           fi
+        else
+          echo "➖ **TestPyPI:** Not applicable for this run" >> $GITHUB_STEP_SUMMARY
         fi
         
+        # PyPI status
         if [[ "${{ github.event_name }}" == "release" ]]; then
-          if [[ "${{ needs.build.outputs.can-publish-pypi }}" == "true" ]]; then
-            echo "- 🚀 **PyPI publication triggered**" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ needs.publish-pypi.result }}" == "success" ]]; then
+            echo "✅ **PyPI:** Published successfully" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.build.outputs.can-publish-pypi }}" != "true" ]]; then
+            echo "❌ **PyPI:** Version already exists" >> $GITHUB_STEP_SUMMARY
           else
-            echo "- ❌ **PyPI publication failed** (version exists)" >> $GITHUB_STEP_SUMMARY
+            echo "❌ **PyPI:** Failed" >> $GITHUB_STEP_SUMMARY
           fi
+        else
+          echo "➖ **PyPI:** Not applicable for this run" >> $GITHUB_STEP_SUMMARY
         fi
 
   docs:

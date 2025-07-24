@@ -14,9 +14,9 @@ __license__ = "Apache-2.0"
 
 # Импорт основных компонентов для удобства использования
 from .datasets import (
-    ModelData,
-    DataSplit,
     DataInfo,
+    DataSplit,
+    ModelData,
     create_data_split,
     create_kfold_data,
 )
@@ -24,10 +24,10 @@ from .datasets import (
 # Условный импорт UCI компонентов (требует ucimlrepo)
 try:
     from .datasets.uci_dataset_manager import (
-        UCIDatasetManager,
         DatasetInfo,
-        TaskType,
         Domain,
+        TaskType,
+        UCIDatasetManager,
         print_dataset_summary,
     )
 

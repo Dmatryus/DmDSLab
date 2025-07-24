@@ -7,9 +7,9 @@ Includes:
 """
 
 from .ml_data_container import (
-    ModelData,
-    DataSplit,
     DataInfo,
+    DataSplit,
+    ModelData,
     create_data_split,
     create_kfold_data,
 )

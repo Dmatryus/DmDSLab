@@ -15,14 +15,18 @@ License: MIT
 """
 
 import sys
-from pathlib import Path
 
-from dmdslab.datasets.uci_dataset_manager import UCIDatasetManager, DatasetInfo, TaskType, Domain
+from dmdslab.datasets.uci_dataset_manager import (
+    DatasetInfo,
+    Domain,
+    TaskType,
+    UCIDatasetManager,
+)
 
 
 def initialize_database():
     """Initialize the UCI dataset database with predefined datasets."""
-    
+
     print("UCI Dataset Database Initialization")
     print("=" * 50)
 
@@ -36,7 +40,7 @@ def initialize_database():
             f"\nDatabase already contains {stats['total_datasets']} datasets. "
             "Do you want to clear and reinitialize? (y/N): "
         )
-        if response.lower() != 'y':
+        if response.lower() != "y":
             print("Initialization cancelled.")
             return
         else:
@@ -440,13 +444,17 @@ def initialize_database():
     print("\nDatabase Statistics:")
     print(f"  Total datasets: {stats['total_datasets']}")
     print("  By task type:")
-    for task_type, count in stats['by_task_type'].items():
+    for task_type, count in stats["by_task_type"].items():
         print(f"    - {task_type}: {count}")
     print("  By domain:")
-    for domain, count in sorted(stats['by_domain'].items(), key=lambda x: x[1], reverse=True)[:5]:
+    for domain, count in sorted(
+        stats["by_domain"].items(), key=lambda x: x[1], reverse=True
+    )[:5]:
         print(f"    - {domain}: {count}")
     print(f"  Imbalanced datasets: {stats['imbalanced_datasets']}")
-    print(f"  Average dataset size: {stats['avg_instances']} instances, {stats['avg_features']} features")
+    print(
+        f"  Average dataset size: {stats['avg_instances']} instances, {stats['avg_features']} features"
+    )
 
     print("\nDatabase initialization complete!")
     print(f"Database location: {manager.db_path}")

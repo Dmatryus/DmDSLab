@@ -4,16 +4,17 @@
 Покрывают все основные классы и функции для работы с ML данными.
 """
 
-import pytest
-import numpy as np
-import pandas as pd
 from datetime import datetime
 from typing import Tuple
 
+import numpy as np
+import pandas as pd
+import pytest
+
 from dmdslab.datasets import (
-    ModelData,
     DataInfo,
     DataSplit,
+    ModelData,
     create_data_split,
     create_kfold_data,
 )

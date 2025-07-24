@@ -8,25 +8,25 @@ License: Apache 2.0
 """
 
 import contextlib
-import pytest
-import tempfile
-import shutil
-import os
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
-import sqlite3
 import json
+import shutil
+import sqlite3
+import tempfile
+from pathlib import Path
+from unittest.mock import Mock, patch
+
 import numpy as np
 import pandas as pd
+import pytest
 
+from dmdslab.datasets import DataSplit, ModelData
 from dmdslab.datasets.uci_dataset_manager import (
     DatasetInfo,
-    TaskType,
     Domain,
+    TaskType,
     UCIDatasetManager,
     print_dataset_summary,
 )
-from dmdslab.datasets import ModelData, DataInfo, DataSplit
 
 
 def create_mock_dataset(
@@ -156,8 +156,8 @@ class TestUCIDatasetManager:
         yield db_path
 
         # Cleanup
-        import time
         import gc
+        import time
 
         gc.collect()
         time.sleep(0.1)
@@ -387,21 +387,6 @@ class TestUCIDatasetManager:
 
         assert "feature_names" in columns
         assert "target_name" in columns
-
-    def test_cache_clearing_on_delete(self, manager, sample_dataset):
-        """Test that cache is cleared when dataset is deleted."""
-        # Add dataset
-        manager.add_dataset(sample_dataset)
-
-        # Access cache info before delete
-        cache_info_before = manager.load_dataset.cache_info()
-
-        # Delete dataset
-        manager.delete_dataset(73)
-
-        # Cache should be cleared
-        cache_info_after = manager.load_dataset.cache_info()
-        assert cache_info_after.currsize == 0
 
     def test_full_integration_workflow(self, manager):
         """Test complete workflows with ModelData and DataSplit."""

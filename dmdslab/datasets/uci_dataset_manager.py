@@ -9,27 +9,25 @@ License: Apache 2.0
 """
 
 import json
-import sqlite3
-from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Union, Any
-from dataclasses import dataclass, asdict
-from enum import Enum
 import logging
-from functools import lru_cache
-from datetime import datetime
+import sqlite3
+from dataclasses import asdict, dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
 try:
     from ucimlrepo import fetch_ucirepo
 except ImportError:
     raise ImportError(
         "ucimlrepo package is required. Install it with: pip install ucimlrepo"
-    )
+    ) from None
 
 # Import our data structures
 from .ml_data_container import (
-    ModelData,
     DataInfo,
     DataSplit,
+    ModelData,
     create_data_split,
     create_kfold_data,
 )
@@ -339,7 +337,6 @@ class UCIDatasetManager:
 
         return [DatasetInfo.from_dict(dict(row)) for row in rows]
 
-    @lru_cache(maxsize=32)
     def load_dataset(self, dataset_id: int) -> ModelData:
         """
         Load a dataset from UCI repository as ModelData.

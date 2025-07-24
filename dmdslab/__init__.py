@@ -7,7 +7,7 @@ DmDSLab: Data Science Laboratory Toolkit
 - datasets: Работа с датасетами и контейнеры данных
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 __author__ = "Dmatryus Detry"
 __email__ = "dmatryus.sqrt49@yandex.ru"
 __license__ = "Apache-2.0"

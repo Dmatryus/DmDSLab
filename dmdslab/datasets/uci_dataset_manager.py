@@ -547,8 +547,6 @@ class UCIDatasetManager:
 
         if deleted:
             logger.info(f"Deleted dataset with ID: {dataset_id}")
-            # Clear cache for this dataset
-            self.load_dataset.cache_clear()
         else:
             logger.warning(f"Dataset with ID {dataset_id} not found")
 
@@ -567,8 +565,6 @@ class UCIDatasetManager:
             conn.commit()
 
         logger.info(f"Deleted all {count} datasets from database")
-        # Clear entire cache
-        self.load_dataset.cache_clear()
         return count
 
     def close(self):
@@ -578,8 +574,6 @@ class UCIDatasetManager:
         This method is useful for cleanup, especially on Windows where
         file handles may remain open.
         """
-        # Clear the LRU cache to release any references
-        self.load_dataset.cache_clear()
 
         # Force garbage collection to close any lingering connections
         import gc

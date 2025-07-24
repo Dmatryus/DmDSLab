@@ -89,7 +89,7 @@ jobs:
           name: dist
           path: dist/
 
-  publish-test:
+  testpypi:
     name: Publish to TestPyPI
     runs-on: ubuntu-latest
     needs: build
@@ -114,7 +114,7 @@ jobs:
           password: ${{ secrets.TEST_PYPI_TOKEN }}
           repository-url: https://test.pypi.org/legacy/
 
-  publish-pypi:
+  pypi:
     name: Publish to PyPI
     runs-on: ubuntu-latest
     needs: build

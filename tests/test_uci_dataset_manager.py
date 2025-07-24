@@ -3,10 +3,11 @@ Tests for UCI Dataset Manager
 
 This module contains comprehensive tests for the UCIDatasetManager class.
 
-Author: Dmatryus Detry
-License: Apache 2.0
+Author: DmDSLab Team
+License: MIT
 """
 
+import contextlib
 import pytest
 import tempfile
 import shutil
@@ -24,6 +25,9 @@ from dmdslab.datasets.uci_dataset_manager import (
     UCIDatasetManager,
     print_dataset_summary,
 )
+
+
+# Import the module to test
 
 
 class TestDatasetInfo:
@@ -132,13 +136,37 @@ class TestUCIDatasetManager:
     def temp_db_path(self):
         """Create a temporary database for testing."""
         temp_dir = tempfile.mkdtemp()
-        yield Path(temp_dir) / "test_uci_datasets.db"
-        shutil.rmtree(temp_dir)
+        db_path = Path(temp_dir) / "test_uci_datasets.db"
+        yield db_path
+
+        # Close any open connections and wait a bit for Windows
+        import time
+        import gc
+
+        gc.collect()  # Force garbage collection to close any lingering connections
+        time.sleep(0.1)  # Give Windows time to release file handles
+
+        # Try to remove directory, with retry for Windows
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                shutil.rmtree(temp_dir)
+                break
+            except PermissionError:
+                if attempt < max_attempts - 1:
+                    time.sleep(0.5)
+                else:
+                    # If we can't delete it, at least try to delete the db file
+                    with contextlib.suppress(Exception):
+                        db_path.unlink(missing_ok=True)
 
     @pytest.fixture
     def manager(self, temp_db_path):
         """Create a UCIDatasetManager instance with temporary database."""
-        return UCIDatasetManager(db_path=temp_db_path)
+        mgr = UCIDatasetManager(db_path=temp_db_path)
+        yield mgr
+        # Cleanup: close connections and clear cache
+        mgr.close()
 
     @pytest.fixture
     def sample_dataset(self):
@@ -155,6 +183,13 @@ class TestUCIDatasetManager:
             description="Classification of mushrooms",
             is_imbalanced=False,
         )
+
+    @pytest.fixture
+    def memory_manager(self):
+        """Create a UCIDatasetManager instance with in-memory database."""
+        # This is an alternative fixture that uses in-memory database
+        # which completely avoids file system issues
+        return UCIDatasetManager(db_path=":memory:")
 
     def test_init_creates_database(self, temp_db_path):
         """Test that initialization creates database file and schema."""
@@ -371,7 +406,7 @@ class TestUCIDatasetManager:
         assert len(filtered) == 1
         assert filtered[0].name == "Match"
 
-    @patch("uci_dataset_manager.fetch_ucirepo")
+    @patch("dmdslab.datasets.uci_dataset_manager.fetch_ucirepo")
     def test_load_dataset_success(self, mock_fetch, manager, sample_dataset):
         """Test successful dataset loading."""
         # Add dataset to database
@@ -390,7 +425,7 @@ class TestUCIDatasetManager:
         assert y == [0, 1]
         mock_fetch.assert_called_once_with(id=73)
 
-    @patch("uci_dataset_manager.fetch_ucirepo")
+    @patch("dmdslab.datasets.uci_dataset_manager.fetch_ucirepo")
     def test_load_dataset_with_metadata(self, mock_fetch, manager, sample_dataset):
         """Test loading dataset with metadata."""
         # Add dataset to database
@@ -415,7 +450,7 @@ class TestUCIDatasetManager:
         with pytest.raises(ValueError, match="Dataset with ID 99999 not found"):
             manager.load_dataset(99999)
 
-    @patch("uci_dataset_manager.fetch_ucirepo")
+    @patch("dmdslab.datasets.uci_dataset_manager.fetch_ucirepo")
     def test_load_dataset_fetch_error(self, mock_fetch, manager, sample_dataset):
         """Test handling fetch errors."""
         # Add dataset to database
@@ -428,7 +463,7 @@ class TestUCIDatasetManager:
         with pytest.raises(Exception, match="Network error"):
             manager.load_dataset(73)
 
-    @patch("uci_dataset_manager.fetch_ucirepo")
+    @patch("dmdslab.datasets.uci_dataset_manager.fetch_ucirepo")
     def test_load_dataset_caching(self, mock_fetch, manager, sample_dataset):
         """Test that dataset loading is cached."""
         # Add dataset to database
@@ -618,82 +653,86 @@ class TestIntegration:
         # Create manager
         manager = UCIDatasetManager(db_path=temp_db_path)
 
-        # Initialize with some datasets
-        test_datasets = [
-            DatasetInfo(
-                id=1,
-                name="Small Balanced",
-                url="http://test1.com",
-                n_instances=1000,
-                n_features=10,
+        try:
+            # Initialize with some datasets
+            test_datasets = [
+                DatasetInfo(
+                    id=1,
+                    name="Small Balanced",
+                    url="http://test1.com",
+                    n_instances=1000,
+                    n_features=10,
+                    task_type=TaskType.BINARY_CLASSIFICATION,
+                    domain=Domain.FINANCE,
+                    is_imbalanced=False,
+                    class_balance={"pos": 0.5, "neg": 0.5},
+                ),
+                DatasetInfo(
+                    id=2,
+                    name="Large Imbalanced",
+                    url="http://test2.com",
+                    n_instances=50000,
+                    n_features=100,
+                    task_type=TaskType.BINARY_CLASSIFICATION,
+                    domain=Domain.MEDICINE,
+                    is_imbalanced=True,
+                    imbalance_ratio=10.0,
+                    class_balance={"pos": 0.91, "neg": 0.09},
+                ),
+                DatasetInfo(
+                    id=3,
+                    name="Medium Regression",
+                    url="http://test3.com",
+                    n_instances=5000,
+                    n_features=50,
+                    task_type=TaskType.REGRESSION,
+                    domain=Domain.PHYSICS,
+                ),
+            ]
+
+            for dataset in test_datasets:
+                manager.add_dataset(dataset)
+
+            # Test various filters
+
+            # 1. Find all binary classification datasets
+            binary_datasets = manager.filter_datasets(
+                task_type=TaskType.BINARY_CLASSIFICATION
+            )
+            assert len(binary_datasets) == 2
+
+            # 2. Find imbalanced datasets
+            imbalanced = manager.filter_datasets(is_imbalanced=True)
+            assert len(imbalanced) == 1
+            assert imbalanced[0].name == "Large Imbalanced"
+
+            # 3. Find datasets in specific size range
+            medium_datasets = manager.filter_datasets(
+                min_instances=1000, max_instances=10000
+            )
+            assert len(medium_datasets) == 2  # Small and Medium
+
+            # 4. Complex query
+            specific_datasets = manager.filter_datasets(
                 task_type=TaskType.BINARY_CLASSIFICATION,
-                domain=Domain.FINANCE,
-                is_imbalanced=False,
-                class_balance={"pos": 0.5, "neg": 0.5},
-            ),
-            DatasetInfo(
-                id=2,
-                name="Large Imbalanced",
-                url="http://test2.com",
-                n_instances=50000,
-                n_features=100,
-                task_type=TaskType.BINARY_CLASSIFICATION,
-                domain=Domain.MEDICINE,
+                min_instances=10000,
                 is_imbalanced=True,
-                imbalance_ratio=10.0,
-                class_balance={"pos": 0.91, "neg": 0.09},
-            ),
-            DatasetInfo(
-                id=3,
-                name="Medium Regression",
-                url="http://test3.com",
-                n_instances=5000,
-                n_features=50,
-                task_type=TaskType.REGRESSION,
-                domain=Domain.PHYSICS,
-            ),
-        ]
+            )
+            assert len(specific_datasets) == 1
+            assert specific_datasets[0].name == "Large Imbalanced"
 
-        for dataset in test_datasets:
-            manager.add_dataset(dataset)
+            # 5. Get statistics
+            stats = manager.get_statistics()
+            assert stats["total_datasets"] == 3
+            assert stats["imbalanced_datasets"] == 1
+            assert stats["by_task_type"]["binary_classification"] == 2
+            assert stats["by_task_type"]["regression"] == 1
 
-        # Test various filters
-
-        # 1. Find all binary classification datasets
-        binary_datasets = manager.filter_datasets(
-            task_type=TaskType.BINARY_CLASSIFICATION
-        )
-        assert len(binary_datasets) == 2
-
-        # 2. Find imbalanced datasets
-        imbalanced = manager.filter_datasets(is_imbalanced=True)
-        assert len(imbalanced) == 1
-        assert imbalanced[0].name == "Large Imbalanced"
-
-        # 3. Find datasets in specific size range
-        medium_datasets = manager.filter_datasets(
-            min_instances=1000, max_instances=10000
-        )
-        assert len(medium_datasets) == 2  # Small and Medium
-
-        # 4. Complex query
-        specific_datasets = manager.filter_datasets(
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            min_instances=10000,
-            is_imbalanced=True,
-        )
-        assert len(specific_datasets) == 1
-        assert specific_datasets[0].name == "Large Imbalanced"
-
-        # 5. Get statistics
-        stats = manager.get_statistics()
-        assert stats["total_datasets"] == 3
-        assert stats["imbalanced_datasets"] == 1
-        assert stats["by_task_type"]["binary_classification"] == 2
-        assert stats["by_task_type"]["regression"] == 1
-
-        # Clean up
-        manager.delete_all_datasets()
+            # Clean up
+            manager.delete_all_datasets()
+        finally:
+            # Ensure manager is closed
+            manager.close()
 
     @pytest.mark.slow
     @pytest.mark.skipif(
@@ -705,51 +744,54 @@ class TestIntegration:
         # Create manager
         manager = UCIDatasetManager(db_path=temp_db_path)
 
-        # Add Iris dataset info (small and reliable for testing)
-        iris_info = DatasetInfo(
-            id=53,  # Iris dataset ID
-            name="Iris",
-            url="https://archive.ics.uci.edu/dataset/53/iris",
-            n_instances=150,
-            n_features=4,
-            task_type=TaskType.MULTICLASS_CLASSIFICATION,
-            domain=Domain.BIOLOGY,
-            description="Classic iris flower classification dataset",
-        )
-        manager.add_dataset(iris_info)
-
         try:
-            # Load the dataset
-            X, y, info = manager.load_dataset(53, return_metadata=True)
-
-            # Verify basic properties
-            assert X is not None
-            assert y is not None
-            assert info.name == "Iris"
-            assert X.shape[0] == 150  # Should have 150 samples
-            assert X.shape[1] == 4  # Should have 4 features
-
-            # Check that data is numeric
-            assert hasattr(X, "dtype") or hasattr(X, "dtypes")
-
-            print(f"Successfully loaded {info.name} dataset")
-            print(f"Shape: {X.shape}")
-            print(
-                f"Target classes: {np.unique(y) if hasattr(y, '__len__') else 'Unknown'}"
+            # Add Iris dataset info (small and reliable for testing)
+            iris_info = DatasetInfo(
+                id=53,  # Iris dataset ID
+                name="Iris",
+                url="https://archive.ics.uci.edu/dataset/53/iris",
+                n_instances=150,
+                n_features=4,
+                task_type=TaskType.MULTICLASS_CLASSIFICATION,
+                domain=Domain.BIOLOGY,
+                description="Classic iris flower classification dataset",
             )
+            manager.add_dataset(iris_info)
 
-        except ImportError:
-            pytest.skip("ucimlrepo not installed")
-        except Exception as e:
-            # If network error or dataset not available, skip
-            # sourcery skip: no-conditionals-in-tests
-            if "Network" in str(e) or "HTTP" in str(e):
-                pytest.skip(f"Network error or dataset unavailable: {e}")
-            else:
-                raise
+            try:
+                # Load the dataset
+                X, y, info = manager.load_dataset(53, return_metadata=True)
+
+                # Verify basic properties
+                assert X is not None
+                assert y is not None
+                assert info.name == "Iris"
+                assert X.shape[0] == 150  # Should have 150 samples
+                assert X.shape[1] == 4  # Should have 4 features
+
+                # Check that data is numeric
+                assert hasattr(X, "dtype") or hasattr(X, "dtypes")
+
+                print(f"Successfully loaded {info.name} dataset")
+                print(f"Shape: {X.shape}")
+                print(
+                    f"Target classes: {np.unique(y) if hasattr(y, '__len__') else 'Unknown'}"
+                )
+
+            except ImportError:
+                pytest.skip("ucimlrepo not installed")
+            except Exception as e:
+                # If network error or dataset not available, skip
+                if "Network" in str(e) or "HTTP" in str(e):
+                    pytest.skip(f"Network error or dataset unavailable: {e}")
+                else:
+                    raise
+            finally:
+                # Clean up
+                manager.delete_dataset(53)
         finally:
-            # Clean up
-            manager.delete_dataset(53)
+            # Ensure manager is closed
+            manager.close()
 
 
 if __name__ == "__main__":

@@ -19,10 +19,10 @@ from functools import lru_cache
 
 try:
     from ucimlrepo import fetch_ucirepo
-except ImportError as e:
+except ImportError:
     raise ImportError(
         "ucimlrepo package is required. Install it with: pip install ucimlrepo"
-    ) from e
+    )
 
 
 # Configure logging
@@ -134,18 +134,29 @@ class UCIDatasetManager:
 
         Args:
             db_path: Path to SQLite database file. If None, uses default location.
+                    Can be ":memory:" for in-memory database (useful for testing).
         """
         if db_path is None:
-            db_path = Path(__file__).parent / "db" / "uci_datasets.db"
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            db_path = Path(__file__).parent / "data" / "uci_datasets.db"
+
+        # Handle special case of in-memory database
+        if db_path == ":memory:":
+            self.db_path = ":memory:"
+        else:
+            self.db_path = Path(db_path)
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Create database connection
         self._init_db()
 
+    def _get_db_path(self) -> str:
+        """Get database path as string, handling special cases like :memory:."""
+        return str(self.db_path) if self.db_path != ":memory:" else ":memory:"
+
     def _init_db(self):
         """Initialize database schema."""
-        with sqlite3.connect(self.db_path) as conn:
+        conn = sqlite3.connect(self._get_db_path())
+        try:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS datasets (
@@ -166,6 +177,8 @@ class UCIDatasetManager:
             """
             )
             conn.commit()
+        finally:
+            conn.close()
 
     def add_dataset(self, dataset_info: DatasetInfo) -> None:
         """
@@ -174,7 +187,7 @@ class UCIDatasetManager:
         Args:
             dataset_info: Dataset metadata
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self._get_db_path()) as conn:
             data = dataset_info.to_dict()
             columns = ", ".join(data.keys())
             placeholders = ", ".join(["?" for _ in data])
@@ -195,12 +208,14 @@ class UCIDatasetManager:
         Returns:
             DatasetInfo object or None if not found
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self._get_db_path()) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
             row = cursor.fetchone()
 
-        return DatasetInfo.from_dict(dict(row)) if row else None
+        if row:
+            return DatasetInfo.from_dict(dict(row))
+        return None
 
     def filter_datasets(
         self,
@@ -232,7 +247,7 @@ class UCIDatasetManager:
             List of DatasetInfo objects matching the criteria
         """
         conditions = []
-        params: list[Any] = []
+        params = []
 
         if task_type:
             conditions.append("task_type = ?")
@@ -274,7 +289,7 @@ class UCIDatasetManager:
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
 
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self._get_db_path()) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(query, params)
             rows = cursor.fetchall()
@@ -311,11 +326,10 @@ class UCIDatasetManager:
             X = dataset.data.features
             y = dataset.data.targets
 
-            # Handle multi-column targets
-            if y is not None and len(y.shape) > 1 and y.shape[1] == 1:
-                y = y.iloc[:, 0] if hasattr(y, "iloc") else y[:, 0]
+            if return_metadata:
+                return X, y, dataset_info
+            return X, y
 
-            return (X, y, dataset_info) if return_metadata else (X, y)
         except Exception as e:
             logger.error(f"Failed to load dataset {dataset_id}: {str(e)}")
             raise
@@ -327,10 +341,13 @@ class UCIDatasetManager:
         Returns:
             Dictionary with statistics
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self._get_db_path()) as conn:
+            stats = {}
+
             # Total datasets
             cursor = conn.execute("SELECT COUNT(*) FROM datasets")
-            stats = {"total_datasets": cursor.fetchone()[0]}
+            stats["total_datasets"] = cursor.fetchone()[0]
+
             # By task type
             cursor = conn.execute(
                 "SELECT task_type, COUNT(*) FROM datasets GROUP BY task_type"
@@ -369,7 +386,7 @@ class UCIDatasetManager:
         Returns:
             True if dataset was deleted, False if not found
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self._get_db_path()) as conn:
             cursor = conn.execute("DELETE FROM datasets WHERE id = ?", (dataset_id,))
             deleted = cursor.rowcount > 0
             conn.commit()
@@ -388,13 +405,28 @@ class UCIDatasetManager:
         Returns:
             Number of datasets deleted
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self._get_db_path()) as conn:
             cursor = conn.execute("DELETE FROM datasets")
             count = cursor.rowcount
             conn.commit()
 
         logger.info(f"Deleted all {count} datasets from database")
         return count
+
+    def close(self):
+        """
+        Close any open database connections and clear cache.
+
+        This method is useful for cleanup, especially on Windows where
+        file handles may remain open.
+        """
+        # Clear the LRU cache to release any references
+        self.load_dataset.cache_clear()
+
+        # Force garbage collection to close any lingering connections
+        import gc
+
+        gc.collect()
 
 
 # Example usage and utility functions

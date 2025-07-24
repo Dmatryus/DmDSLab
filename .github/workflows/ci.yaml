@@ -76,10 +76,11 @@ jobs:
     
     - name: Get package version
       run: |
-        # Use dedicated script to get version
-        VERSION=$(python scripts/get_version.py)
+        # Simple one-liner to extract version
+        VERSION=$(grep "__version__" dmdslab/__init__.py | head -1 | sed 's/.*=.*[\"'\'']\([^\"'\'']*\)[\"'\''].*/\1/')
         echo "📦 Package version: $VERSION"
         echo "PACKAGE_VERSION=$VERSION" >> $GITHUB_ENV
+    
     
     - name: Check if version exists on TestPyPI
       run: |

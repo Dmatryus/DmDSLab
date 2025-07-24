@@ -3,7 +3,7 @@ Tests for UCI Dataset Manager v2 with ModelData and DataSplit support
 
 This module contains comprehensive tests for the updated UCIDatasetManager class.
 
-Author: DmDSLab Team
+Author: Dmatryus Detry
 License: Apache 2.0
 """
 
@@ -27,6 +27,45 @@ from dmdslab.datasets.uci_dataset_manager import (
     print_dataset_summary,
 )
 from dmdslab.datasets import ModelData, DataInfo, DataSplit
+
+
+def create_mock_dataset(
+    n_samples,
+    n_features,
+    n_classes=2,
+    targets_shape=None,
+    use_pandas=False,
+    no_target=False,
+):
+    """Helper function to create properly configured mock dataset."""
+    mock_dataset = Mock()
+    mock_dataset.data = Mock()
+
+    if use_pandas:
+        mock_dataset.data.features = pd.DataFrame(
+            np.random.randn(n_samples, n_features),
+            columns=[f"col_{i}" for i in range(n_features)],
+        )
+        if not no_target:
+            mock_dataset.data.targets = pd.Series(
+                np.random.randint(0, n_classes, n_samples)
+            )
+        else:
+            mock_dataset.data.targets = None
+    else:
+        mock_dataset.data.features = np.random.randn(n_samples, n_features)
+        if not no_target:
+            if targets_shape is not None:
+                mock_dataset.data.targets = np.random.randint(
+                    0, n_classes, targets_shape
+                )
+            else:
+                mock_dataset.data.targets = np.random.randint(0, n_classes, n_samples)
+        else:
+            mock_dataset.data.targets = None
+
+    mock_dataset.data.feature_names = None
+    return mock_dataset
 
 
 class TestDatasetInfo:
@@ -167,10 +206,7 @@ class TestUCIDatasetManager:
         manager.add_dataset(sample_dataset)
 
         # Mock the fetch_ucirepo response
-        mock_dataset = Mock()
-        mock_dataset.data.features = np.random.randn(100, 22)
-        mock_dataset.data.targets = np.random.randint(0, 2, 100)
-        mock_fetch.return_value = mock_dataset
+        mock_fetch.return_value = create_mock_dataset(100, 22)
 
         # Load dataset
         model_data = manager.load_dataset(73)
@@ -194,12 +230,7 @@ class TestUCIDatasetManager:
         manager.add_dataset(sample_dataset)
 
         # Mock the fetch_ucirepo response with pandas data
-        mock_dataset = Mock()
-        mock_dataset.data.features = pd.DataFrame(
-            np.random.randn(50, 22), columns=[f"col_{i}" for i in range(22)]
-        )
-        mock_dataset.data.targets = pd.Series(np.random.randint(0, 2, 50))
-        mock_fetch.return_value = mock_dataset
+        mock_fetch.return_value = create_mock_dataset(50, 22, use_pandas=True)
 
         # Load dataset
         model_data = manager.load_dataset(73)
@@ -216,10 +247,7 @@ class TestUCIDatasetManager:
         manager.add_dataset(sample_dataset)
 
         # Mock the fetch_ucirepo response
-        mock_dataset = Mock()
-        mock_dataset.data.features = np.random.randn(1000, 22)
-        mock_dataset.data.targets = np.random.randint(0, 2, 1000)
-        mock_fetch.return_value = mock_dataset
+        mock_fetch.return_value = create_mock_dataset(1000, 22)
 
         # Load dataset with split
         split = manager.load_dataset_split(73, test_size=0.2, random_state=42)
@@ -240,10 +268,7 @@ class TestUCIDatasetManager:
         manager.add_dataset(sample_dataset)
 
         # Mock the fetch_ucirepo response
-        mock_dataset = Mock()
-        mock_dataset.data.features = np.random.randn(1000, 22)
-        mock_dataset.data.targets = np.random.randint(0, 2, 1000)
-        mock_fetch.return_value = mock_dataset
+        mock_fetch.return_value = create_mock_dataset(1000, 22)
 
         # Load dataset with full split
         split = manager.load_dataset_split(
@@ -272,11 +297,12 @@ class TestUCIDatasetManager:
         )
         manager.add_dataset(dataset)
 
-        # Mock the fetch_ucirepo response
+        # Mock the fetch_ucirepo response with imbalanced data
         mock_dataset = Mock()
+        mock_dataset.data = Mock()
         mock_dataset.data.features = np.random.randn(1000, 10)
-        # Create imbalanced targets
         mock_dataset.data.targets = np.array([0] * 700 + [1] * 300)
+        mock_dataset.data.feature_names = None
         mock_fetch.return_value = mock_dataset
 
         # Load with split (stratify should be auto-enabled)
@@ -295,10 +321,7 @@ class TestUCIDatasetManager:
         manager.add_dataset(sample_dataset)
 
         # Mock the fetch_ucirepo response
-        mock_dataset = Mock()
-        mock_dataset.data.features = np.random.randn(150, 22)
-        mock_dataset.data.targets = np.random.randint(0, 2, 150)
-        mock_fetch.return_value = mock_dataset
+        mock_fetch.return_value = create_mock_dataset(150, 22)
 
         # Load dataset with k-fold splits
         splits = manager.load_dataset_kfold(73, n_splits=5, random_state=42)
@@ -329,10 +352,7 @@ class TestUCIDatasetManager:
         manager.add_dataset(dataset)
 
         # Mock response without targets
-        mock_dataset = Mock()
-        mock_dataset.data.features = np.random.randn(200, 5)
-        mock_dataset.data.targets = None
-        mock_fetch.return_value = mock_dataset
+        mock_fetch.return_value = create_mock_dataset(200, 5, no_target=True)
 
         # Load dataset
         model_data = manager.load_dataset(999)
@@ -350,10 +370,7 @@ class TestUCIDatasetManager:
         manager.add_dataset(sample_dataset)
 
         # Mock response with 2D target
-        mock_dataset = Mock()
-        mock_dataset.data.features = np.random.randn(100, 22)
-        mock_dataset.data.targets = np.random.randint(0, 2, (100, 1))  # 2D array
-        mock_fetch.return_value = mock_dataset
+        mock_fetch.return_value = create_mock_dataset(100, 22, targets_shape=(100, 1))
 
         # Load dataset
         model_data = manager.load_dataset(73)
@@ -405,10 +422,7 @@ class TestUCIDatasetManager:
 
         # Mock the fetch
         with patch("dmdslab.datasets.uci_dataset_manager.fetch_ucirepo") as mock_fetch:
-            mock_dataset = Mock()
-            mock_dataset.data.features = np.random.randn(5000, 20)
-            mock_dataset.data.targets = np.random.randint(0, 3, 5000)
-            mock_fetch.return_value = mock_dataset
+            mock_fetch.return_value = create_mock_dataset(5000, 20, n_classes=3)
 
             # 1. Load as ModelData
             model_data = manager.load_dataset(100)
@@ -442,8 +456,7 @@ class TestErrorHandling:
 
     @pytest.fixture
     def manager(self):
-        """Create manager with in-memory database."""
-        return UCIDatasetManager(db_path=":memory:")
+        return UCIDatasetManager()
 
     def test_load_nonexistent_dataset(self, manager):
         """Test loading dataset that doesn't exist in database."""
@@ -480,6 +493,50 @@ class TestErrorHandling:
 
         with pytest.raises(Exception, match="Network connection failed"):
             manager.load_dataset(1)
+
+
+class TestUtilityFunctions:
+    """Test utility functions."""
+
+    def test_print_dataset_summary(self, capsys):
+        """Test dataset summary printing."""
+        datasets = [
+            DatasetInfo(
+                id=1,
+                name="Test Dataset 1",
+                url="http://test1.com",
+                n_instances=1000,
+                n_features=10,
+                task_type=TaskType.BINARY_CLASSIFICATION,
+                domain=Domain.FINANCE,
+                is_imbalanced=True,
+            ),
+            DatasetInfo(
+                id=2,
+                name="Test Dataset 2",
+                url="http://test2.com",
+                n_instances=50000,
+                n_features=100,
+                task_type=TaskType.REGRESSION,
+                domain=Domain.PHYSICS,
+                is_imbalanced=False,
+            ),
+        ]
+
+        print_dataset_summary(datasets)
+
+        captured = capsys.readouterr()
+        output = captured.out
+
+        assert "Found 2 datasets:" in output
+        assert "Test Dataset 1" in output
+        assert "Test Dataset 2" in output
+        assert "1,000" in output  # Formatted number
+        assert "50,000" in output  # Formatted number
+        assert "finance" in output
+        assert "physics" in output
+        assert "Yes" in output  # Imbalanced
+        assert "No" in output  # Not imbalanced
 
 
 if __name__ == "__main__":

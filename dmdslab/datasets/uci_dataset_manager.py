@@ -4,7 +4,7 @@ UCI Dataset Manager for DmDSLab (v2)
 This module provides a convenient interface for working with UCI Machine Learning Repository datasets.
 It uses ModelData and DataSplit containers for better integration with the DmDSLab ecosystem.
 
-Author: DmDSLab Team
+Author: Dmatryus Detry
 License: Apache 2.0
 """
 
@@ -16,6 +16,7 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 import logging
 from functools import lru_cache
+from datetime import datetime
 
 try:
     from ucimlrepo import fetch_ucirepo
@@ -174,8 +175,6 @@ class UCIDatasetManager:
     - Cache loaded datasets for efficiency
     """
 
-    db_path: Union[str, Path]
-
     def __init__(self, db_path: Optional[Union[str, Path]] = None):
         """
         Initialize the dataset manager.
@@ -185,11 +184,8 @@ class UCIDatasetManager:
                     Can be ":memory:" for in-memory database (useful for testing).
         """
         if db_path is None:
-            db_path = Path(__file__).parent / "data" / "uci_datasets.db"
+            self.db_path = Path(__file__).parent / "db" / "uci_datasets.db"
 
-        # Handle special case of in-memory database
-        if db_path == ":memory:":
-            self.db_path = ":memory:"
         else:
             self.db_path = Path(db_path)
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -203,8 +199,7 @@ class UCIDatasetManager:
 
     def _init_db(self):
         """Initialize database schema."""
-        conn = sqlite3.connect(self._get_db_path())
-        try:
+        with sqlite3.connect(self._get_db_path()) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS datasets (
@@ -227,8 +222,6 @@ class UCIDatasetManager:
             """
             )
             conn.commit()
-        finally:
-            conn.close()
 
     def add_dataset(self, dataset_info: DatasetInfo) -> None:
         """
@@ -263,7 +256,9 @@ class UCIDatasetManager:
             cursor = conn.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
             row = cursor.fetchone()
 
-        return DatasetInfo.from_dict(dict(row)) if row else None
+        if row:
+            return DatasetInfo.from_dict(dict(row))
+        return None
 
     def filter_datasets(
         self,
@@ -377,10 +372,20 @@ class UCIDatasetManager:
 
             # Try to get feature names from the fetched dataset
             feature_names = dataset_info.feature_names
-            if feature_names is None and hasattr(dataset.data, "feature_names"):
-                feature_names = list(dataset.data.feature_names)
-            elif feature_names is None and hasattr(X, "columns"):
-                feature_names = list(X.columns)
+            if feature_names is None:
+                if (
+                    hasattr(dataset.data, "feature_names")
+                    and dataset.data.feature_names is not None
+                ):
+                    try:
+                        feature_names = list(dataset.data.feature_names)
+                    except (TypeError, AttributeError):
+                        feature_names = None
+                elif hasattr(X, "columns"):
+                    try:
+                        feature_names = list(X.columns)
+                    except (TypeError, AttributeError):
+                        feature_names = None
 
             # Create ModelData with metadata
             return ModelData(
@@ -494,9 +499,12 @@ class UCIDatasetManager:
             Dictionary with statistics
         """
         with sqlite3.connect(self._get_db_path()) as conn:
+            stats = {}
+
             # Total datasets
             cursor = conn.execute("SELECT COUNT(*) FROM datasets")
-            stats = {"total_datasets": cursor.fetchone()[0]}
+            stats["total_datasets"] = cursor.fetchone()[0]
+
             # By task type
             cursor = conn.execute(
                 "SELECT task_type, COUNT(*) FROM datasets GROUP BY task_type"

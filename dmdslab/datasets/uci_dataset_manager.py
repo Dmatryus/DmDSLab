@@ -1,10 +1,10 @@
 """
-UCI Dataset Manager for DmDSLab
+UCI Dataset Manager for DmDSLab (v2)
 
 This module provides a convenient interface for working with UCI Machine Learning Repository datasets.
-It includes a local database of dataset metadata and allows filtering and loading datasets based on various criteria.
+It uses ModelData and DataSplit containers for better integration with the DmDSLab ecosystem.
 
-Author: Dmatryus Detry
+Author: DmDSLab Team
 License: Apache 2.0
 """
 
@@ -24,6 +24,14 @@ except ImportError:
         "ucimlrepo package is required. Install it with: pip install ucimlrepo"
     )
 
+# Import our data structures
+from .ml_data_container import (
+    ModelData,
+    DataInfo,
+    DataSplit,
+    create_data_split,
+    create_kfold_data,
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -81,6 +89,8 @@ class DatasetInfo:
         has_missing_values: Whether dataset contains missing values
         is_imbalanced: Whether dataset is imbalanced (for classification)
         imbalance_ratio: Ratio of majority to minority class
+        feature_names: List of feature names (if available)
+        target_name: Name of the target variable (if available)
     """
 
     id: int
@@ -96,6 +106,8 @@ class DatasetInfo:
     has_missing_values: bool = False
     is_imbalanced: bool = False
     imbalance_ratio: Optional[float] = None
+    feature_names: Optional[List[str]] = None
+    target_name: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for storage."""
@@ -104,6 +116,8 @@ class DatasetInfo:
         data["domain"] = self.domain.value
         if self.class_balance:
             data["class_balance"] = json.dumps(self.class_balance)
+        if self.feature_names:
+            data["feature_names"] = json.dumps(self.feature_names)
         return data
 
     @classmethod
@@ -114,7 +128,38 @@ class DatasetInfo:
         data["domain"] = Domain(data["domain"])
         if data.get("class_balance") and isinstance(data["class_balance"], str):
             data["class_balance"] = json.loads(data["class_balance"])
+        if data.get("feature_names") and isinstance(data["feature_names"], str):
+            data["feature_names"] = json.loads(data["feature_names"])
         return cls(**data)
+
+    def to_data_info(self) -> DataInfo:
+        """Convert to DataInfo for use with ModelData."""
+        metadata = {
+            "uci_id": self.id,
+            "task_type": self.task_type.value,
+            "domain": self.domain.value,
+            "n_instances": self.n_instances,
+            "n_features": self.n_features,
+            "has_missing_values": self.has_missing_values,
+        }
+
+        if self.class_balance:
+            metadata["class_balance"] = self.class_balance
+        if self.is_imbalanced:
+            metadata["is_imbalanced"] = self.is_imbalanced
+            metadata["imbalance_ratio"] = self.imbalance_ratio
+        if self.year:
+            metadata["year"] = self.year
+        if self.target_name:
+            metadata["target_name"] = self.target_name
+
+        return DataInfo(
+            name=self.name,
+            description=self.description or f"UCI ML Repository: {self.name}",
+            source=self.url,
+            version="1.0.0",
+            metadata=metadata,
+        )
 
 
 class UCIDatasetManager:
@@ -124,9 +169,12 @@ class UCIDatasetManager:
     This class provides functionality to:
     - Store and retrieve dataset metadata in a local SQLite database
     - Filter datasets by various criteria
-    - Load datasets using ucimlrepo
+    - Load datasets as ModelData objects
+    - Create DataSplit objects with train/validation/test splits
     - Cache loaded datasets for efficiency
     """
+
+    db_path: Union[str, Path]
 
     def __init__(self, db_path: Optional[Union[str, Path]] = None):
         """
@@ -172,7 +220,9 @@ class UCIDatasetManager:
                     year INTEGER,
                     has_missing_values BOOLEAN,
                     is_imbalanced BOOLEAN,
-                    imbalance_ratio REAL
+                    imbalance_ratio REAL,
+                    feature_names TEXT,
+                    target_name TEXT
                 )
             """
             )
@@ -213,9 +263,7 @@ class UCIDatasetManager:
             cursor = conn.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
             row = cursor.fetchone()
 
-        if row:
-            return DatasetInfo.from_dict(dict(row))
-        return None
+        return DatasetInfo.from_dict(dict(row)) if row else None
 
     def filter_datasets(
         self,
@@ -297,19 +345,15 @@ class UCIDatasetManager:
         return [DatasetInfo.from_dict(dict(row)) for row in rows]
 
     @lru_cache(maxsize=32)
-    def load_dataset(
-        self, dataset_id: int, return_metadata: bool = False
-    ) -> Union[Tuple[Any, Any], Tuple[Any, Any, DatasetInfo]]:
+    def load_dataset(self, dataset_id: int) -> ModelData:
         """
-        Load a dataset from UCI repository.
+        Load a dataset from UCI repository as ModelData.
 
         Args:
             dataset_id: UCI repository dataset ID
-            return_metadata: Whether to return dataset metadata along with data
 
         Returns:
-            If return_metadata is False: (X, y) tuple
-            If return_metadata is True: (X, y, dataset_info) tuple
+            ModelData object containing the dataset
 
         Raises:
             ValueError: If dataset not found in database
@@ -322,17 +366,125 @@ class UCIDatasetManager:
         logger.info(f"Loading dataset: {dataset_info.name} (ID: {dataset_id})")
 
         try:
+            # Fetch dataset from UCI repository
             dataset = fetch_ucirepo(id=dataset_id)
             X = dataset.data.features
             y = dataset.data.targets
 
-            if return_metadata:
-                return X, y, dataset_info
-            return X, y
+            # Convert target to 1D array if necessary
+            if y is not None and len(y.shape) > 1 and y.shape[1] == 1:
+                y = y.ravel()
+
+            # Try to get feature names from the fetched dataset
+            feature_names = dataset_info.feature_names
+            if feature_names is None and hasattr(dataset.data, "feature_names"):
+                feature_names = list(dataset.data.feature_names)
+            elif feature_names is None and hasattr(X, "columns"):
+                feature_names = list(X.columns)
+
+            # Create ModelData with metadata
+            return ModelData(
+                features=X,
+                target=y,
+                feature_names=feature_names,
+                info=dataset_info.to_data_info(),
+            )
 
         except Exception as e:
             logger.error(f"Failed to load dataset {dataset_id}: {str(e)}")
             raise
+
+    def load_dataset_split(
+        self,
+        dataset_id: int,
+        test_size: Optional[float] = 0.2,
+        validation_size: Optional[float] = None,
+        random_state: Optional[int] = None,
+        stratify: bool = None,
+    ) -> DataSplit:
+        """
+        Load a dataset and create train/validation/test splits.
+
+        Args:
+            dataset_id: UCI repository dataset ID
+            test_size: Proportion of data for test set (default: 0.2)
+            validation_size: Proportion of data for validation set (default: None)
+            random_state: Random seed for reproducibility
+            stratify: Whether to stratify splits. If None, auto-detect based on task type
+
+        Returns:
+            DataSplit object with train/validation/test sets
+
+        Raises:
+            ValueError: If dataset not found or splitting parameters invalid
+        """
+        # Load the dataset
+        model_data = self.load_dataset(dataset_id)
+
+        # Auto-detect stratification for classification tasks
+        if stratify is None and model_data.info:
+            task_type = model_data.info.metadata.get("task_type")
+            stratify = task_type in [
+                "binary_classification",
+                "multiclass_classification",
+            ]
+
+        # Create the split
+        split = create_data_split(
+            features=model_data.features,
+            y=model_data.target,
+            test_size=test_size,
+            validation_size=validation_size,
+            random_state=random_state,
+            stratify=stratify,
+        )
+
+        # Add dataset info to split metadata
+        split.split_info["dataset_name"] = model_data.info.name
+        split.split_info["dataset_id"] = dataset_id
+
+        return split
+
+    def load_dataset_kfold(
+        self,
+        dataset_id: int,
+        n_splits: int = 5,
+        shuffle: bool = True,
+        random_state: Optional[int] = None,
+    ) -> List[DataSplit]:
+        """
+        Load a dataset and create k-fold cross-validation splits.
+
+        Args:
+            dataset_id: UCI repository dataset ID
+            n_splits: Number of folds (default: 5)
+            shuffle: Whether to shuffle data before splitting
+            random_state: Random seed for reproducibility
+
+        Returns:
+            List of DataSplit objects, one for each fold
+
+        Raises:
+            ValueError: If dataset not found
+        """
+        # Load the dataset
+        model_data = self.load_dataset(dataset_id)
+
+        # Create k-fold splits
+        splits = create_kfold_data(
+            features=model_data.features,
+            y=model_data.target,
+            n_splits=n_splits,
+            shuffle=shuffle,
+            random_state=random_state,
+        )
+
+        # Add dataset info to each split
+        for split in splits:
+            split.split_info["dataset_name"] = model_data.info.name
+            split.split_info["dataset_id"] = dataset_id
+
+        return splits
 
     def get_statistics(self) -> Dict[str, Any]:
         """
@@ -342,12 +494,9 @@ class UCIDatasetManager:
             Dictionary with statistics
         """
         with sqlite3.connect(self._get_db_path()) as conn:
-            stats = {}
-
             # Total datasets
             cursor = conn.execute("SELECT COUNT(*) FROM datasets")
-            stats["total_datasets"] = cursor.fetchone()[0]
-
+            stats = {"total_datasets": cursor.fetchone()[0]}
             # By task type
             cursor = conn.execute(
                 "SELECT task_type, COUNT(*) FROM datasets GROUP BY task_type"
@@ -393,6 +542,8 @@ class UCIDatasetManager:
 
         if deleted:
             logger.info(f"Deleted dataset with ID: {dataset_id}")
+            # Clear cache for this dataset
+            self.load_dataset.cache_clear()
         else:
             logger.warning(f"Dataset with ID {dataset_id} not found")
 
@@ -411,6 +562,8 @@ class UCIDatasetManager:
             conn.commit()
 
         logger.info(f"Deleted all {count} datasets from database")
+        # Clear entire cache
+        self.load_dataset.cache_clear()
         return count
 
     def close(self):
@@ -468,15 +621,37 @@ if __name__ == "__main__":
     )
     print_dataset_summary(datasets)
 
-    # Example: Load a specific dataset (if database is populated)
-    if stats["total_datasets"] > 0:
+    # Example: Load a specific dataset as ModelData
+    if stats["total_datasets"] > 0 and datasets:
         print("\n" + "=" * 80)
-        print("Loading first available dataset...")
-        first_dataset = datasets[0] if datasets else None
-        if first_dataset:
-            X, y, info = manager.load_dataset(first_dataset.id, return_metadata=True)
-            print(f"Dataset: {info.name}")
-            print(f"Shape: {X.shape}")
-            print(f"Class distribution: {info.class_balance}")
+        print("Loading first available dataset as ModelData...")
+        first_dataset = datasets[0]
+
+        # Load as ModelData
+        model_data = manager.load_dataset(first_dataset.id)
+        print(f"\nDataset: {model_data.info.name}")
+        print(f"Shape: {model_data.shape}")
+        print(f"Features: {model_data.n_features}")
+        print(f"Samples: {model_data.n_samples}")
+
+        # Create train/test split
+        print("\nCreating train/test split...")
+        split = manager.load_dataset_split(
+            first_dataset.id, test_size=0.2, random_state=42
+        )
+        print(f"Train size: {split.train.n_samples}")
+        print(f"Test size: {split.test.n_samples}")
+        print(f"Split ratios: {split.get_split_ratios()}")
+
+        # Create k-fold splits
+        print("\nCreating 5-fold cross-validation splits...")
+        kfold_splits = manager.load_dataset_kfold(
+            first_dataset.id, n_splits=5, random_state=42
+        )
+        print(f"Number of folds: {len(kfold_splits)}")
+        print(
+            f"First fold - Train: {kfold_splits[0].train.n_samples}, "
+            f"Val: {kfold_splits[0].validation.n_samples}"
+        )
     else:
         print("\nNo datasets found. Run initialize_uci_database.py first.")

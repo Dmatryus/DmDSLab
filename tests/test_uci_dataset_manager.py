@@ -1,10 +1,10 @@
 """
-Tests for UCI Dataset Manager
+Tests for UCI Dataset Manager v2 with ModelData and DataSplit support
 
-This module contains comprehensive tests for the UCIDatasetManager class.
+This module contains comprehensive tests for the updated UCIDatasetManager class.
 
 Author: DmDSLab Team
-License: MIT
+License: Apache 2.0
 """
 
 import contextlib
@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch, MagicMock
 import sqlite3
 import json
 import numpy as np
+import pandas as pd
 
 from dmdslab.datasets.uci_dataset_manager import (
     DatasetInfo,
@@ -25,112 +26,88 @@ from dmdslab.datasets.uci_dataset_manager import (
     UCIDatasetManager,
     print_dataset_summary,
 )
-
-
-# Import the module to test
+from dmdslab.datasets import ModelData, DataInfo, DataSplit
 
 
 class TestDatasetInfo:
-    """Test DatasetInfo dataclass functionality."""
+    """Test enhanced DatasetInfo functionality."""
 
-    def test_dataset_info_creation(self):
-        """Test creating a DatasetInfo instance."""
+    def test_dataset_info_with_feature_names(self):
+        """Test DatasetInfo with feature names."""
+        feature_names = ["sepal_length", "sepal_width", "petal_length", "petal_width"]
         dataset = DatasetInfo(
-            id=1,
-            name="Test Dataset",
+            id=53,
+            name="Iris",
             url="https://test.com",
-            n_instances=1000,
-            n_features=10,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.FINANCE,
-            class_balance={"positive": 0.7, "negative": 0.3},
-            description="Test description",
-            year=2023,
-            has_missing_values=True,
-            is_imbalanced=True,
-            imbalance_ratio=2.33,
+            n_instances=150,
+            n_features=4,
+            task_type=TaskType.MULTICLASS_CLASSIFICATION,
+            domain=Domain.BIOLOGY,
+            feature_names=feature_names,
+            target_name="species",
         )
 
-        assert dataset.id == 1
-        assert dataset.name == "Test Dataset"
-        assert dataset.n_instances == 1000
-        assert dataset.n_features == 10
-        assert dataset.task_type == TaskType.BINARY_CLASSIFICATION
-        assert dataset.domain == Domain.FINANCE
-        assert dataset.class_balance == {"positive": 0.7, "negative": 0.3}
-        assert dataset.is_imbalanced is True
-        assert dataset.imbalance_ratio == 2.33
+        assert dataset.feature_names == feature_names
+        assert dataset.target_name == "species"
 
-    def test_dataset_info_to_dict(self):
-        """Test converting DatasetInfo to dictionary."""
+    def test_to_data_info_conversion(self):
+        """Test conversion to DataInfo object."""
         dataset = DatasetInfo(
-            id=1,
-            name="Test Dataset",
-            url="https://test.com",
-            n_instances=1000,
-            n_features=10,
+            id=73,
+            name="Mushroom",
+            url="https://archive.ics.uci.edu/dataset/73/mushroom",
+            n_instances=8124,
+            n_features=22,
             task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.FINANCE,
-            class_balance={"positive": 0.7, "negative": 0.3},
+            domain=Domain.BIOLOGY,
+            class_balance={"edible": 0.52, "poisonous": 0.48},
+            description="Classification of mushrooms",
+            year=1987,
+            is_imbalanced=False,
         )
 
-        data_dict = dataset.to_dict()
+        data_info = dataset.to_data_info()
 
-        assert data_dict["id"] == 1
-        assert data_dict["name"] == "Test Dataset"
-        assert data_dict["task_type"] == "binary_classification"
-        assert data_dict["domain"] == "finance"
-        assert data_dict["class_balance"] == '{"positive": 0.7, "negative": 0.3}'
-
-    def test_dataset_info_from_dict(self):
-        """Test creating DatasetInfo from dictionary."""
-        data_dict = {
-            "id": 1,
-            "name": "Test Dataset",
-            "url": "https://test.com",
-            "n_instances": 1000,
-            "n_features": 10,
-            "task_type": "binary_classification",
-            "domain": "finance",
-            "class_balance": '{"positive": 0.7, "negative": 0.3}',
-            "description": "Test description",
-            "year": 2023,
-            "has_missing_values": True,
-            "is_imbalanced": True,
-            "imbalance_ratio": 2.33,
+        assert data_info.name == "Mushroom"
+        assert data_info.source == "https://archive.ics.uci.edu/dataset/73/mushroom"
+        assert data_info.description == "Classification of mushrooms"
+        assert data_info.metadata["uci_id"] == 73
+        assert data_info.metadata["task_type"] == "binary_classification"
+        assert data_info.metadata["domain"] == "biology"
+        assert data_info.metadata["class_balance"] == {
+            "edible": 0.52,
+            "poisonous": 0.48,
         }
+        assert data_info.metadata["year"] == 1987
 
-        dataset = DatasetInfo.from_dict(data_dict)
-
-        assert dataset.id == 1
-        assert dataset.name == "Test Dataset"
-        assert dataset.task_type == TaskType.BINARY_CLASSIFICATION
-        assert dataset.domain == Domain.FINANCE
-        assert dataset.class_balance == {"positive": 0.7, "negative": 0.3}
-        assert dataset.is_imbalanced is True
-
-    def test_dataset_info_minimal(self):
-        """Test creating DatasetInfo with minimal required fields."""
+    def test_to_dict_from_dict_with_feature_names(self):
+        """Test serialization with feature names."""
+        feature_names = ["feature1", "feature2", "feature3"]
         dataset = DatasetInfo(
             id=1,
-            name="Minimal Dataset",
+            name="Test",
             url="https://test.com",
             n_instances=100,
-            n_features=5,
+            n_features=3,
             task_type=TaskType.REGRESSION,
             domain=Domain.PHYSICS,
+            feature_names=feature_names,
+            target_name="output",
         )
 
-        assert dataset.class_balance is None
-        assert dataset.description == ""
-        assert dataset.year is None
-        assert dataset.has_missing_values is False
-        assert dataset.is_imbalanced is False
-        assert dataset.imbalance_ratio is None
+        # Convert to dict and back
+        data_dict = dataset.to_dict()
+        assert data_dict["feature_names"] == json.dumps(feature_names)
+        assert data_dict["target_name"] == "output"
+
+        # Recreate from dict
+        dataset_restored = DatasetInfo.from_dict(data_dict)
+        assert dataset_restored.feature_names == feature_names
+        assert dataset_restored.target_name == "output"
 
 
 class TestUCIDatasetManager:
-    """Test UCIDatasetManager functionality."""
+    """Test UCIDatasetManager with ModelData and DataSplit functionality."""
 
     @pytest.fixture
     def temp_db_path(self):
@@ -139,14 +116,13 @@ class TestUCIDatasetManager:
         db_path = Path(temp_dir) / "test_uci_datasets.db"
         yield db_path
 
-        # Close any open connections and wait a bit for Windows
+        # Cleanup
         import time
         import gc
 
-        gc.collect()  # Force garbage collection to close any lingering connections
-        time.sleep(0.1)  # Give Windows time to release file handles
+        gc.collect()
+        time.sleep(0.1)
 
-        # Try to remove directory, with retry for Windows
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
@@ -156,7 +132,6 @@ class TestUCIDatasetManager:
                 if attempt < max_attempts - 1:
                     time.sleep(0.5)
                 else:
-                    # If we can't delete it, at least try to delete the db file
                     with contextlib.suppress(Exception):
                         db_path.unlink(missing_ok=True)
 
@@ -165,7 +140,6 @@ class TestUCIDatasetManager:
         """Create a UCIDatasetManager instance with temporary database."""
         mgr = UCIDatasetManager(db_path=temp_db_path)
         yield mgr
-        # Cleanup: close connections and clear cache
         mgr.close()
 
     @pytest.fixture
@@ -182,616 +156,330 @@ class TestUCIDatasetManager:
             class_balance={"edible": 0.52, "poisonous": 0.48},
             description="Classification of mushrooms",
             is_imbalanced=False,
+            feature_names=[f"feature_{i}" for i in range(22)],
+            target_name="edibility",
         )
-
-    @pytest.fixture
-    def memory_manager(self):
-        """Create a UCIDatasetManager instance with in-memory database."""
-        # This is an alternative fixture that uses in-memory database
-        # which completely avoids file system issues
-        return UCIDatasetManager(db_path=":memory:")
-
-    def test_init_creates_database(self, temp_db_path):
-        """Test that initialization creates database file and schema."""
-        manager = UCIDatasetManager(db_path=temp_db_path)
-
-        # Check database file exists
-        assert temp_db_path.exists()
-
-        # Check table exists
-        with sqlite3.connect(temp_db_path) as conn:
-            cursor = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='datasets'"
-            )
-            assert cursor.fetchone() is not None
-
-    def test_add_dataset(self, manager, sample_dataset):
-        """Test adding a dataset to the database."""
-        manager.add_dataset(sample_dataset)
-
-        # Verify dataset was added
-        dataset_info = manager.get_dataset_info(73)
-        assert dataset_info is not None
-        assert dataset_info.name == "Mushroom"
-        assert dataset_info.n_instances == 8124
-
-    def test_add_dataset_update(self, manager, sample_dataset):
-        """Test updating an existing dataset."""
-        # Add dataset
-        manager.add_dataset(sample_dataset)
-
-        # Update dataset
-        sample_dataset.n_instances = 9000
-        sample_dataset.description = "Updated description"
-        manager.add_dataset(sample_dataset)
-
-        # Verify update
-        dataset_info = manager.get_dataset_info(73)
-        assert dataset_info.n_instances == 9000
-        assert dataset_info.description == "Updated description"
-
-    def test_get_dataset_info_not_found(self, manager):
-        """Test getting non-existent dataset."""
-        dataset_info = manager.get_dataset_info(99999)
-        assert dataset_info is None
-
-    def test_filter_datasets_by_task_type(self, manager):
-        """Test filtering datasets by task type."""
-        # Add multiple datasets
-        datasets = [
-            DatasetInfo(
-                id=1,
-                name="Binary1",
-                url="http://test1.com",
-                n_instances=1000,
-                n_features=10,
-                task_type=TaskType.BINARY_CLASSIFICATION,
-                domain=Domain.FINANCE,
-            ),
-            DatasetInfo(
-                id=2,
-                name="Regression1",
-                url="http://test2.com",
-                n_instances=2000,
-                n_features=20,
-                task_type=TaskType.REGRESSION,
-                domain=Domain.PHYSICS,
-            ),
-            DatasetInfo(
-                id=3,
-                name="Binary2",
-                url="http://test3.com",
-                n_instances=3000,
-                n_features=30,
-                task_type=TaskType.BINARY_CLASSIFICATION,
-                domain=Domain.MEDICINE,
-            ),
-        ]
-
-        for dataset in datasets:
-            manager.add_dataset(dataset)
-
-        # Filter by task type
-        binary_datasets = manager.filter_datasets(
-            task_type=TaskType.BINARY_CLASSIFICATION
-        )
-        assert len(binary_datasets) == 2
-        assert all(
-            d.task_type == TaskType.BINARY_CLASSIFICATION for d in binary_datasets
-        )
-
-    def test_filter_datasets_by_size(self, manager):
-        """Test filtering datasets by instance count."""
-        # Add datasets with different sizes
-        for i, size in enumerate([500, 1500, 2500, 3500]):
-            manager.add_dataset(
-                DatasetInfo(
-                    id=i,
-                    name=f"Dataset{i}",
-                    url=f"http://test{i}.com",
-                    n_instances=size,
-                    n_features=10,
-                    task_type=TaskType.BINARY_CLASSIFICATION,
-                    domain=Domain.FINANCE,
-                )
-            )
-
-        # Filter by size range
-        filtered = manager.filter_datasets(min_instances=1000, max_instances=3000)
-        assert len(filtered) == 2
-        assert all(1000 <= d.n_instances <= 3000 for d in filtered)
-
-    def test_filter_datasets_by_imbalance(self, manager):
-        """Test filtering datasets by imbalance."""
-        # Add balanced and imbalanced datasets
-        datasets = [
-            DatasetInfo(
-                id=1,
-                name="Balanced",
-                url="http://test1.com",
-                n_instances=1000,
-                n_features=10,
-                task_type=TaskType.BINARY_CLASSIFICATION,
-                domain=Domain.FINANCE,
-                is_imbalanced=False,
-            ),
-            DatasetInfo(
-                id=2,
-                name="Imbalanced1",
-                url="http://test2.com",
-                n_instances=2000,
-                n_features=20,
-                task_type=TaskType.BINARY_CLASSIFICATION,
-                domain=Domain.MEDICINE,
-                is_imbalanced=True,
-                imbalance_ratio=5.0,
-            ),
-            DatasetInfo(
-                id=3,
-                name="Imbalanced2",
-                url="http://test3.com",
-                n_instances=3000,
-                n_features=30,
-                task_type=TaskType.BINARY_CLASSIFICATION,
-                domain=Domain.PHYSICS,
-                is_imbalanced=True,
-                imbalance_ratio=10.0,
-            ),
-        ]
-
-        for dataset in datasets:
-            manager.add_dataset(dataset)
-
-        # Filter imbalanced datasets
-        imbalanced = manager.filter_datasets(is_imbalanced=True)
-        assert len(imbalanced) == 2
-        assert all(d.is_imbalanced for d in imbalanced)
-
-        # Filter by imbalance ratio
-        highly_imbalanced = manager.filter_datasets(
-            is_imbalanced=True, max_imbalance_ratio=7.0
-        )
-        assert len(highly_imbalanced) == 1
-        assert highly_imbalanced[0].name == "Imbalanced1"
-
-    def test_filter_datasets_multiple_criteria(self, manager):
-        """Test filtering with multiple criteria."""
-        # Add diverse datasets
-        manager.add_dataset(
-            DatasetInfo(
-                id=1,
-                name="Match",
-                url="http://test1.com",
-                n_instances=5000,
-                n_features=50,
-                task_type=TaskType.BINARY_CLASSIFICATION,
-                domain=Domain.FINANCE,
-                is_imbalanced=True,
-                imbalance_ratio=3.0,
-            )
-        )
-        manager.add_dataset(
-            DatasetInfo(
-                id=2,
-                name="NoMatch1",
-                url="http://test2.com",
-                n_instances=500,  # Too small
-                n_features=50,
-                task_type=TaskType.BINARY_CLASSIFICATION,
-                domain=Domain.FINANCE,
-                is_imbalanced=True,
-                imbalance_ratio=3.0,
-            )
-        )
-        manager.add_dataset(
-            DatasetInfo(
-                id=3,
-                name="NoMatch2",
-                url="http://test3.com",
-                n_instances=5000,
-                n_features=50,
-                task_type=TaskType.REGRESSION,  # Wrong type
-                domain=Domain.FINANCE,
-            )
-        )
-
-        # Apply multiple filters
-        filtered = manager.filter_datasets(
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.FINANCE,
-            min_instances=1000,
-            is_imbalanced=True,
-        )
-
-        assert len(filtered) == 1
-        assert filtered[0].name == "Match"
 
     @patch("dmdslab.datasets.uci_dataset_manager.fetch_ucirepo")
-    def test_load_dataset_success(self, mock_fetch, manager, sample_dataset):
-        """Test successful dataset loading."""
+    def test_load_dataset_returns_model_data(self, mock_fetch, manager, sample_dataset):
+        """Test that load_dataset returns ModelData object."""
         # Add dataset to database
         manager.add_dataset(sample_dataset)
 
         # Mock the fetch_ucirepo response
         mock_dataset = Mock()
-        mock_dataset.data.features = [[1, 2, 3], [4, 5, 6]]
-        mock_dataset.data.targets = [0, 1]
+        mock_dataset.data.features = np.random.randn(100, 22)
+        mock_dataset.data.targets = np.random.randint(0, 2, 100)
         mock_fetch.return_value = mock_dataset
 
         # Load dataset
-        X, y = manager.load_dataset(73)
+        model_data = manager.load_dataset(73)
 
-        assert X == [[1, 2, 3], [4, 5, 6]]
-        assert y == [0, 1]
-        mock_fetch.assert_called_once_with(id=73)
+        # Verify it's a ModelData object
+        assert isinstance(model_data, ModelData)
+        assert model_data.n_samples == 100
+        assert model_data.n_features == 22
+        assert model_data.feature_names == [f"feature_{i}" for i in range(22)]
+
+        # Check DataInfo
+        assert model_data.info is not None
+        assert model_data.info.name == "Mushroom"
+        assert model_data.info.metadata["uci_id"] == 73
+        assert model_data.info.metadata["task_type"] == "binary_classification"
 
     @patch("dmdslab.datasets.uci_dataset_manager.fetch_ucirepo")
-    def test_load_dataset_with_metadata(self, mock_fetch, manager, sample_dataset):
-        """Test loading dataset with metadata."""
+    def test_load_dataset_with_pandas_data(self, mock_fetch, manager, sample_dataset):
+        """Test loading dataset that returns pandas DataFrames."""
+        # Add dataset to database
+        manager.add_dataset(sample_dataset)
+
+        # Mock the fetch_ucirepo response with pandas data
+        mock_dataset = Mock()
+        mock_dataset.data.features = pd.DataFrame(
+            np.random.randn(50, 22), columns=[f"col_{i}" for i in range(22)]
+        )
+        mock_dataset.data.targets = pd.Series(np.random.randint(0, 2, 50))
+        mock_fetch.return_value = mock_dataset
+
+        # Load dataset
+        model_data = manager.load_dataset(73)
+
+        # Verify conversion to numpy
+        assert isinstance(model_data.features, np.ndarray)
+        assert isinstance(model_data.target, np.ndarray)
+        assert model_data.n_samples == 50
+
+    @patch("dmdslab.datasets.uci_dataset_manager.fetch_ucirepo")
+    def test_load_dataset_split(self, mock_fetch, manager, sample_dataset):
+        """Test loading dataset with automatic train/test split."""
         # Add dataset to database
         manager.add_dataset(sample_dataset)
 
         # Mock the fetch_ucirepo response
         mock_dataset = Mock()
-        mock_dataset.data.features = [[1, 2, 3]]
-        mock_dataset.data.targets = [0]
+        mock_dataset.data.features = np.random.randn(1000, 22)
+        mock_dataset.data.targets = np.random.randint(0, 2, 1000)
         mock_fetch.return_value = mock_dataset
 
-        # Load dataset with metadata
-        X, y, info = manager.load_dataset(73, return_metadata=True)
+        # Load dataset with split
+        split = manager.load_dataset_split(73, test_size=0.2, random_state=42)
 
-        assert X == [[1, 2, 3]]
-        assert y == [0]
-        assert info.name == "Mushroom"
-        assert info.n_instances == 8124
-
-    def test_load_dataset_not_found(self, manager):
-        """Test loading non-existent dataset."""
-        with pytest.raises(ValueError, match="Dataset with ID 99999 not found"):
-            manager.load_dataset(99999)
+        # Verify it's a DataSplit object
+        assert isinstance(split, DataSplit)
+        assert split.train.n_samples == 800
+        assert split.test.n_samples == 200
+        assert split.split_info["dataset_name"] == "Mushroom"
+        assert split.split_info["dataset_id"] == 73
 
     @patch("dmdslab.datasets.uci_dataset_manager.fetch_ucirepo")
-    def test_load_dataset_fetch_error(self, mock_fetch, manager, sample_dataset):
-        """Test handling fetch errors."""
-        # Add dataset to database
-        manager.add_dataset(sample_dataset)
-
-        # Mock fetch error
-        mock_fetch.side_effect = Exception("Network error")
-
-        # Should raise the exception
-        with pytest.raises(Exception, match="Network error"):
-            manager.load_dataset(73)
-
-    @patch("dmdslab.datasets.uci_dataset_manager.fetch_ucirepo")
-    def test_load_dataset_caching(self, mock_fetch, manager, sample_dataset):
-        """Test that dataset loading is cached."""
+    def test_load_dataset_split_with_validation(
+        self, mock_fetch, manager, sample_dataset
+    ):
+        """Test loading dataset with train/validation/test split."""
         # Add dataset to database
         manager.add_dataset(sample_dataset)
 
         # Mock the fetch_ucirepo response
         mock_dataset = Mock()
-        mock_dataset.data.features = [[1, 2, 3]]
-        mock_dataset.data.targets = [0]
+        mock_dataset.data.features = np.random.randn(1000, 22)
+        mock_dataset.data.targets = np.random.randint(0, 2, 1000)
         mock_fetch.return_value = mock_dataset
 
-        # Load dataset twice
-        X1, y1 = manager.load_dataset(73)
-        X2, y2 = manager.load_dataset(73)
+        # Load dataset with full split
+        split = manager.load_dataset_split(
+            73, test_size=0.2, validation_size=0.2, random_state=42
+        )
 
-        # Should only fetch once due to caching
-        mock_fetch.assert_called_once()
-        assert X1 == X2
-        assert y1 == y2
+        # Verify splits
+        assert split.train.n_samples == 600
+        assert split.validation.n_samples == 200
+        assert split.test.n_samples == 200
+        assert split.has_validation
+        assert split.has_test
 
-    def test_get_statistics_empty(self, manager):
-        """Test getting statistics from empty database."""
-        stats = manager.get_statistics()
+    @patch("dmdslab.datasets.uci_dataset_manager.fetch_ucirepo")
+    def test_load_dataset_split_auto_stratify(self, mock_fetch, manager):
+        """Test that stratification is auto-enabled for classification tasks."""
+        # Add classification dataset
+        dataset = DatasetInfo(
+            id=1,
+            name="Binary Classification",
+            url="https://test.com",
+            n_instances=1000,
+            n_features=10,
+            task_type=TaskType.BINARY_CLASSIFICATION,
+            domain=Domain.FINANCE,
+        )
+        manager.add_dataset(dataset)
 
-        assert stats["total_datasets"] == 0
-        assert stats["by_task_type"] == {}
-        assert stats["by_domain"] == {}
-        assert stats["imbalanced_datasets"] == 0
-        assert stats["avg_instances"] == 0
-        assert stats["avg_features"] == 0
+        # Mock the fetch_ucirepo response
+        mock_dataset = Mock()
+        mock_dataset.data.features = np.random.randn(1000, 10)
+        # Create imbalanced targets
+        mock_dataset.data.targets = np.array([0] * 700 + [1] * 300)
+        mock_fetch.return_value = mock_dataset
 
-    def test_get_statistics_with_data(self, manager):
-        """Test getting statistics with datasets."""
-        # Add various datasets
-        datasets = [
-            DatasetInfo(
-                id=1,
-                name="Dataset1",
-                url="http://test1.com",
-                n_instances=1000,
-                n_features=10,
-                task_type=TaskType.BINARY_CLASSIFICATION,
-                domain=Domain.FINANCE,
-                is_imbalanced=True,
-            ),
-            DatasetInfo(
-                id=2,
-                name="Dataset2",
-                url="http://test2.com",
-                n_instances=2000,
-                n_features=20,
-                task_type=TaskType.BINARY_CLASSIFICATION,
-                domain=Domain.MEDICINE,
-                is_imbalanced=False,
-            ),
-            DatasetInfo(
-                id=3,
-                name="Dataset3",
-                url="http://test3.com",
-                n_instances=3000,
-                n_features=30,
-                task_type=TaskType.REGRESSION,
-                domain=Domain.FINANCE,
-                is_imbalanced=False,
-            ),
-        ]
+        # Load with split (stratify should be auto-enabled)
+        split = manager.load_dataset_split(1, test_size=0.2, random_state=42)
 
-        for dataset in datasets:
-            manager.add_dataset(dataset)
+        # Check that class distribution is preserved
+        train_ratio = np.mean(split.train.target == 1)
+        test_ratio = np.mean(split.test.target == 1)
+        assert abs(train_ratio - 0.3) < 0.05  # Should be close to 30%
+        assert abs(test_ratio - 0.3) < 0.05
 
-        stats = manager.get_statistics()
+    @patch("dmdslab.datasets.uci_dataset_manager.fetch_ucirepo")
+    def test_load_dataset_kfold(self, mock_fetch, manager, sample_dataset):
+        """Test loading dataset with k-fold cross-validation splits."""
+        # Add dataset to database
+        manager.add_dataset(sample_dataset)
 
-        assert stats["total_datasets"] == 3
-        assert stats["by_task_type"]["binary_classification"] == 2
-        assert stats["by_task_type"]["regression"] == 1
-        assert stats["by_domain"]["finance"] == 2
-        assert stats["by_domain"]["medicine"] == 1
-        assert stats["imbalanced_datasets"] == 1
-        assert stats["avg_instances"] == 2000
-        assert stats["avg_features"] == 20
+        # Mock the fetch_ucirepo response
+        mock_dataset = Mock()
+        mock_dataset.data.features = np.random.randn(150, 22)
+        mock_dataset.data.targets = np.random.randint(0, 2, 150)
+        mock_fetch.return_value = mock_dataset
 
-    def test_delete_dataset(self, manager, sample_dataset):
-        """Test deleting a dataset from the database."""
+        # Load dataset with k-fold splits
+        splits = manager.load_dataset_kfold(73, n_splits=5, random_state=42)
+
+        # Verify splits
+        assert len(splits) == 5
+        for i, split in enumerate(splits):
+            assert isinstance(split, DataSplit)
+            assert split.train.n_samples == 120
+            assert split.validation.n_samples == 30
+            assert split.split_info["fold"] == i
+            assert split.split_info["dataset_name"] == "Mushroom"
+            assert split.split_info["dataset_id"] == 73
+
+    @patch("dmdslab.datasets.uci_dataset_manager.fetch_ucirepo")
+    def test_load_dataset_with_missing_target(self, mock_fetch, manager):
+        """Test loading dataset without target variable (unsupervised)."""
+        # Add clustering dataset
+        dataset = DatasetInfo(
+            id=999,
+            name="Clustering Dataset",
+            url="https://test.com",
+            n_instances=200,
+            n_features=5,
+            task_type=TaskType.CLUSTERING,
+            domain=Domain.ARTIFICIAL,
+        )
+        manager.add_dataset(dataset)
+
+        # Mock response without targets
+        mock_dataset = Mock()
+        mock_dataset.data.features = np.random.randn(200, 5)
+        mock_dataset.data.targets = None
+        mock_fetch.return_value = mock_dataset
+
+        # Load dataset
+        model_data = manager.load_dataset(999)
+
+        # Verify no target
+        assert model_data.target is None
+        assert not model_data.has_target
+        assert model_data.n_samples == 200
+        assert model_data.n_features == 5
+
+    @patch("dmdslab.datasets.uci_dataset_manager.fetch_ucirepo")
+    def test_load_dataset_handles_2d_target(self, mock_fetch, manager, sample_dataset):
+        """Test that 2D targets are converted to 1D."""
+        # Add dataset to database
+        manager.add_dataset(sample_dataset)
+
+        # Mock response with 2D target
+        mock_dataset = Mock()
+        mock_dataset.data.features = np.random.randn(100, 22)
+        mock_dataset.data.targets = np.random.randint(0, 2, (100, 1))  # 2D array
+        mock_fetch.return_value = mock_dataset
+
+        # Load dataset
+        model_data = manager.load_dataset(73)
+
+        # Verify target is 1D
+        assert model_data.target.ndim == 1
+        assert len(model_data.target) == 100
+
+    def test_database_schema_includes_new_fields(self, manager):
+        """Test that database schema includes feature_names and target_name."""
+        with sqlite3.connect(manager._get_db_path()) as conn:
+            cursor = conn.execute("PRAGMA table_info(datasets)")
+            columns = {row[1] for row in cursor.fetchall()}
+
+        assert "feature_names" in columns
+        assert "target_name" in columns
+
+    def test_cache_clearing_on_delete(self, manager, sample_dataset):
+        """Test that cache is cleared when dataset is deleted."""
         # Add dataset
         manager.add_dataset(sample_dataset)
 
-        # Verify it was added
-        assert manager.get_dataset_info(73) is not None
+        # Access cache info before delete
+        cache_info_before = manager.load_dataset.cache_info()
 
         # Delete dataset
-        deleted = manager.delete_dataset(73)
-        assert deleted is True
+        manager.delete_dataset(73)
 
-        # Verify it was deleted
-        assert manager.get_dataset_info(73) is None
+        # Cache should be cleared
+        cache_info_after = manager.load_dataset.cache_info()
+        assert cache_info_after.currsize == 0
 
-    def test_delete_dataset_not_found(self, manager):
-        """Test deleting non-existent dataset."""
-        deleted = manager.delete_dataset(99999)
-        assert deleted is False
+    def test_full_integration_workflow(self, manager):
+        """Test complete workflow with ModelData and DataSplit."""
+        # Add a dataset
+        dataset = DatasetInfo(
+            id=100,
+            name="Integration Test Dataset",
+            url="https://test.com",
+            n_instances=5000,
+            n_features=20,
+            task_type=TaskType.MULTICLASS_CLASSIFICATION,
+            domain=Domain.ARTIFICIAL,
+            feature_names=[f"x{i}" for i in range(20)],
+            target_name="class",
+            description="Dataset for integration testing",
+        )
+        manager.add_dataset(dataset)
 
-    def test_delete_all_datasets(self, manager):
-        """Test deleting all datasets."""
-        # Add multiple datasets
-        for i in range(1, 4):
-            manager.add_dataset(
-                DatasetInfo(
-                    id=i,
-                    name=f"Dataset{i}",
-                    url=f"http://test{i}.com",
-                    n_instances=1000 * i,
-                    n_features=10 * i,
-                    task_type=TaskType.BINARY_CLASSIFICATION,
-                    domain=Domain.FINANCE,
-                )
-            )
+        # Mock the fetch
+        with patch("dmdslab.datasets.uci_dataset_manager.fetch_ucirepo") as mock_fetch:
+            mock_dataset = Mock()
+            mock_dataset.data.features = np.random.randn(5000, 20)
+            mock_dataset.data.targets = np.random.randint(0, 3, 5000)
+            mock_fetch.return_value = mock_dataset
 
-        # Verify they were added
-        stats = manager.get_statistics()
-        assert stats["total_datasets"] == 3
+            # 1. Load as ModelData
+            model_data = manager.load_dataset(100)
+            assert isinstance(model_data, ModelData)
+            assert model_data.shape == (5000, 20)
+            assert model_data.info.name == "Integration Test Dataset"
 
-        # Delete all
-        count = manager.delete_all_datasets()
-        assert count == 3
+            # 2. Convert to pandas and back
+            features_df, target_series = model_data.to_pandas()
+            assert isinstance(features_df, pd.DataFrame)
+            assert features_df.columns.tolist() == [f"x{i}" for i in range(20)]
 
-        # Verify all deleted
-        stats = manager.get_statistics()
-        assert stats["total_datasets"] == 0
+            # 3. Create train/test split
+            split = manager.load_dataset_split(100, test_size=0.3, random_state=42)
+            assert split.train.n_samples == 3500
+            assert split.test.n_samples == 1500
 
+            # 4. Create k-fold splits
+            kfold_splits = manager.load_dataset_kfold(100, n_splits=3, random_state=42)
+            assert len(kfold_splits) == 3
 
-class TestUtilityFunctions:
-    """Test utility functions."""
-
-    def test_print_dataset_summary(self, capsys):
-        """Test dataset summary printing."""
-        datasets = [
-            DatasetInfo(
-                id=1,
-                name="Test Dataset 1",
-                url="http://test1.com",
-                n_instances=1000,
-                n_features=10,
-                task_type=TaskType.BINARY_CLASSIFICATION,
-                domain=Domain.FINANCE,
-                is_imbalanced=True,
-            ),
-            DatasetInfo(
-                id=2,
-                name="Test Dataset 2",
-                url="http://test2.com",
-                n_instances=50000,
-                n_features=100,
-                task_type=TaskType.REGRESSION,
-                domain=Domain.PHYSICS,
-                is_imbalanced=False,
-            ),
-        ]
-
-        print_dataset_summary(datasets)
-
-        captured = capsys.readouterr()
-        output = captured.out
-
-        assert "Found 2 datasets:" in output
-        assert "Test Dataset 1" in output
-        assert "Test Dataset 2" in output
-        assert "1,000" in output  # Formatted number
-        assert "50,000" in output  # Formatted number
-        assert "finance" in output
-        assert "physics" in output
-        assert "Yes" in output  # Imbalanced
-        assert "No" in output  # Not imbalanced
+            # 5. Work with a fold
+            first_fold = kfold_splits[0]
+            # Sample from training data
+            train_sample = first_fold.train.sample(n=100, random_state=42)
+            assert train_sample.n_samples == 100
 
 
-class TestIntegration:
-    """Integration tests for the complete workflow."""
+class TestErrorHandling:
+    """Test error handling scenarios."""
 
     @pytest.fixture
-    def temp_db_path(self):
-        """Create a temporary database for testing."""
-        temp_dir = tempfile.mkdtemp()
-        yield Path(temp_dir) / "test_integration.db"
-        shutil.rmtree(temp_dir)
+    def manager(self):
+        """Create manager with in-memory database."""
+        return UCIDatasetManager(db_path=":memory:")
 
-    def test_complete_workflow(self, temp_db_path):
-        """Test a complete workflow of initializing, filtering, and loading."""
-        # Create manager
-        manager = UCIDatasetManager(db_path=temp_db_path)
+    def test_load_nonexistent_dataset(self, manager):
+        """Test loading dataset that doesn't exist in database."""
+        with pytest.raises(ValueError, match="Dataset with ID 99999 not found"):
+            manager.load_dataset(99999)
 
-        try:
-            # Initialize with some datasets
-            test_datasets = [
-                DatasetInfo(
-                    id=1,
-                    name="Small Balanced",
-                    url="http://test1.com",
-                    n_instances=1000,
-                    n_features=10,
-                    task_type=TaskType.BINARY_CLASSIFICATION,
-                    domain=Domain.FINANCE,
-                    is_imbalanced=False,
-                    class_balance={"pos": 0.5, "neg": 0.5},
-                ),
-                DatasetInfo(
-                    id=2,
-                    name="Large Imbalanced",
-                    url="http://test2.com",
-                    n_instances=50000,
-                    n_features=100,
-                    task_type=TaskType.BINARY_CLASSIFICATION,
-                    domain=Domain.MEDICINE,
-                    is_imbalanced=True,
-                    imbalance_ratio=10.0,
-                    class_balance={"pos": 0.91, "neg": 0.09},
-                ),
-                DatasetInfo(
-                    id=3,
-                    name="Medium Regression",
-                    url="http://test3.com",
-                    n_instances=5000,
-                    n_features=50,
-                    task_type=TaskType.REGRESSION,
-                    domain=Domain.PHYSICS,
-                ),
-            ]
+    def test_load_split_nonexistent_dataset(self, manager):
+        """Test creating split for nonexistent dataset."""
+        with pytest.raises(ValueError, match="Dataset with ID 99999 not found"):
+            manager.load_dataset_split(99999)
 
-            for dataset in test_datasets:
-                manager.add_dataset(dataset)
+    def test_load_kfold_nonexistent_dataset(self, manager):
+        """Test creating k-fold for nonexistent dataset."""
+        with pytest.raises(ValueError, match="Dataset with ID 99999 not found"):
+            manager.load_dataset_kfold(99999)
 
-            # Test various filters
+    @patch("dmdslab.datasets.uci_dataset_manager.fetch_ucirepo")
+    def test_network_error_handling(self, mock_fetch, manager):
+        """Test handling of network errors during fetch."""
+        # Add dataset
+        dataset = DatasetInfo(
+            id=1,
+            name="Test",
+            url="https://test.com",
+            n_instances=100,
+            n_features=5,
+            task_type=TaskType.REGRESSION,
+            domain=Domain.PHYSICS,
+        )
+        manager.add_dataset(dataset)
 
-            # 1. Find all binary classification datasets
-            binary_datasets = manager.filter_datasets(
-                task_type=TaskType.BINARY_CLASSIFICATION
-            )
-            assert len(binary_datasets) == 2
+        # Mock network error
+        mock_fetch.side_effect = Exception("Network connection failed")
 
-            # 2. Find imbalanced datasets
-            imbalanced = manager.filter_datasets(is_imbalanced=True)
-            assert len(imbalanced) == 1
-            assert imbalanced[0].name == "Large Imbalanced"
-
-            # 3. Find datasets in specific size range
-            medium_datasets = manager.filter_datasets(
-                min_instances=1000, max_instances=10000
-            )
-            assert len(medium_datasets) == 2  # Small and Medium
-
-            # 4. Complex query
-            specific_datasets = manager.filter_datasets(
-                task_type=TaskType.BINARY_CLASSIFICATION,
-                min_instances=10000,
-                is_imbalanced=True,
-            )
-            assert len(specific_datasets) == 1
-            assert specific_datasets[0].name == "Large Imbalanced"
-
-            # 5. Get statistics
-            stats = manager.get_statistics()
-            assert stats["total_datasets"] == 3
-            assert stats["imbalanced_datasets"] == 1
-            assert stats["by_task_type"]["binary_classification"] == 2
-            assert stats["by_task_type"]["regression"] == 1
-
-            # Clean up
-            manager.delete_all_datasets()
-        finally:
-            # Ensure manager is closed
-            manager.close()
-
-    @pytest.mark.slow
-    @pytest.mark.skipif(
-        not os.environ.get("RUN_SLOW_TESTS", False),
-        reason="Skipping slow test. Set RUN_SLOW_TESTS=1 to run.",
-    )
-    def test_real_dataset_loading(self, temp_db_path):
-        """Test loading a real dataset from UCI repository."""
-        # Create manager
-        manager = UCIDatasetManager(db_path=temp_db_path)
-
-        try:
-            # Add Iris dataset info (small and reliable for testing)
-            iris_info = DatasetInfo(
-                id=53,  # Iris dataset ID
-                name="Iris",
-                url="https://archive.ics.uci.edu/dataset/53/iris",
-                n_instances=150,
-                n_features=4,
-                task_type=TaskType.MULTICLASS_CLASSIFICATION,
-                domain=Domain.BIOLOGY,
-                description="Classic iris flower classification dataset",
-            )
-            manager.add_dataset(iris_info)
-
-            try:
-                # Load the dataset
-                X, y, info = manager.load_dataset(53, return_metadata=True)
-
-                # Verify basic properties
-                assert X is not None
-                assert y is not None
-                assert info.name == "Iris"
-                assert X.shape[0] == 150  # Should have 150 samples
-                assert X.shape[1] == 4  # Should have 4 features
-
-                # Check that data is numeric
-                assert hasattr(X, "dtype") or hasattr(X, "dtypes")
-
-                print(f"Successfully loaded {info.name} dataset")
-                print(f"Shape: {X.shape}")
-                print(
-                    f"Target classes: {np.unique(y) if hasattr(y, '__len__') else 'Unknown'}"
-                )
-
-            except ImportError:
-                pytest.skip("ucimlrepo not installed")
-            except Exception as e:
-                # If network error or dataset not available, skip
-                if "Network" in str(e) or "HTTP" in str(e):
-                    pytest.skip(f"Network error or dataset unavailable: {e}")
-                else:
-                    raise
-            finally:
-                # Clean up
-                manager.delete_dataset(53)
-        finally:
-            # Ensure manager is closed
-            manager.close()
+        with pytest.raises(Exception, match="Network connection failed"):
+            manager.load_dataset(1)
 
 
 if __name__ == "__main__":

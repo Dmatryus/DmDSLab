@@ -4,4 +4,4 @@ scikit-learn~=1.0.0
 pytest~=8.3.4
 numpy~=1.21.0
 ucimlrepo~=0.0.7
-setuptools~=80.9.0
+setuptools

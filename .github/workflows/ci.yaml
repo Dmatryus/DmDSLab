@@ -76,7 +76,17 @@ jobs:
 
     - name: Get package version
       run: |
-        VERSION=$(python -c "import dmdslab; print(dmdslab.__version__)")
+        # Extract version from __init__.py without importing the module
+        VERSION=$(python -c "
+import re
+with open('dmdslab/__init__.py', 'r') as f:
+    content = f.read()
+match = re.search(r'__version__\s*=\s*[\"\'](.*?)[\"\']', content)
+if match:
+    print(match.group(1))
+else:
+    raise ValueError('Version not found in __init__.py')
+")
         echo "📦 Package version: $VERSION"
         echo "PACKAGE_VERSION=$VERSION" >> $GITHUB_ENV
 
@@ -135,8 +145,14 @@ jobs:
 
     - name: Check version and publish
       run: |
-        # Get version from artifacts metadata or re-check
-        VERSION=$(find dist -name "*.whl" | head -1 | sed -n 's/.*DmDSLab-\([^-]*\)-.*/\1/p')
+        # Get version from wheel filename more reliably
+        WHEEL_FILE=$(find dist -name "DmDSLab-*.whl" | head -1)
+        if [ -z "$WHEEL_FILE" ]; then
+          echo "❌ No wheel file found!"
+          exit 1
+        fi
+        
+        VERSION=$(basename "$WHEEL_FILE" | sed -n 's/DmDSLab-\([^-]*\)-.*/\1/p')
         echo "Publishing version: $VERSION"
         
         if curl -s --fail "https://test.pypi.org/pypi/DmDSLab/$VERSION/json" > /dev/null 2>&1; then
@@ -173,8 +189,14 @@ jobs:
 
     - name: Check version and publish
       run: |
-        # Get version from artifacts 
-        VERSION=$(find dist -name "*.whl" | head -1 | sed -n 's/.*DmDSLab-\([^-]*\)-.*/\1/p')
+        # Get version from wheel filename more reliably
+        WHEEL_FILE=$(find dist -name "DmDSLab-*.whl" | head -1)
+        if [ -z "$WHEEL_FILE" ]; then
+          echo "❌ No wheel file found!"
+          exit 1
+        fi
+        
+        VERSION=$(basename "$WHEEL_FILE" | sed -n 's/DmDSLab-\([^-]*\)-.*/\1/p')
         echo "Publishing version: $VERSION"
         
         if curl -s --fail "https://pypi.org/pypi/DmDSLab/$VERSION/json" > /dev/null 2>&1; then

@@ -404,7 +404,7 @@ class TestUCIDatasetManager:
         assert cache_info_after.currsize == 0
 
     def test_full_integration_workflow(self, manager):
-        """Test complete workflow with ModelData and DataSplit."""
+        """Test complete workflows with ModelData and DataSplit."""
         # Add a dataset
         dataset = DatasetInfo(
             id=100,

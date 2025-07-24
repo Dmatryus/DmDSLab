@@ -1,0 +1,108 @@
+name: 🐛 Bug Report
+description: File a bug report to help us improve DmDSLab
+title: "[BUG] "
+labels: ["bug", "triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! 🙏
+        
+        Before submitting, please check if a similar issue already exists.
+        
+  - type: textarea
+    id: description
+    attributes:
+      label: 🐛 Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: Describe the bug...
+    validations:
+      required: true
+      
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 🔄 Steps to Reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Import '...'
+        2. Call function '...'
+        3. See error
+      value: |
+        1. 
+        2. 
+        3. 
+    validations:
+      required: true
+      
+  - type: textarea
+    id: expected
+    attributes:
+      label: ✅ Expected Behavior
+      description: A clear description of what you expected to happen.
+      placeholder: What should have happened?
+    validations:
+      required: true
+      
+  - type: textarea
+    id: actual
+    attributes:
+      label: ❌ Actual Behavior
+      description: A clear description of what actually happened.
+      placeholder: What actually happened?
+    validations:
+      required: true
+      
+  - type: textarea
+    id: code
+    attributes:
+      label: 💻 Minimal Code Example
+      description: Please provide a minimal reproducible example
+      render: python
+      placeholder: |
+        import dmdslab
+        # Your code here...
+        
+  - type: textarea
+    id: environment
+    attributes:
+      label: 🌍 Environment
+      description: Please provide your environment details
+      value: |
+        - OS: [e.g., Windows 11, Ubuntu 22.04, macOS 13.0]
+        - Python version: [e.g., 3.9.7]
+        - DmDSLab version: [e.g., 0.1.0]
+        - Installation method: [pip, conda, from source]
+      render: markdown
+    validations:
+      required: true
+      
+  - type: textarea
+    id: error_traceback
+    attributes:
+      label: 📜 Error Traceback
+      description: If applicable, paste the full error traceback
+      render: shell
+      placeholder: Paste the full traceback here...
+      
+  - type: textarea
+    id: additional
+    attributes:
+      label: 📝 Additional Context
+      description: Add any other context, screenshots, or relevant information
+      placeholder: Any additional information that might be helpful...
+      
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: ✅ Checklist
+      description: Please confirm the following
+      options:
+        - label: I have searched for existing issues that might be related
+          required: true
+        - label: I have provided a minimal reproducible example
+          required: true
+        - label: I am using the latest version of DmDSLab
+          required: false

@@ -1,12 +1,10 @@
-name: CI/CD Pipeline
+name: CI Pipeline
 
 on:
   push:
     branches: [ main, develop ]
   pull_request:
     branches: [ main ]
-  release:
-    types: [ published ]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -21,34 +19,34 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'pip'
-    
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -e .[dev,uci]
-    
+
     - name: Run linting with Ruff
       run: |
         ruff check dmdslab/ tests/
         ruff format --check dmdslab/ tests/
-    
+
     - name: Run type checking with mypy
       run: mypy dmdslab/
       continue-on-error: true
-    
+
     - name: Run tests with pytest
       run: |
         pytest tests/ -v --cov=dmdslab --cov-report=xml --cov-report=term-missing
-    
+
     - name: Upload coverage to Codecov
       if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'
       uses: codecov/codecov-action@v3
@@ -57,15 +55,9 @@ jobs:
         fail_ci_if_error: false
 
   build:
-    name: Build package
+    name: Build and validate package
     runs-on: ubuntu-latest
     needs: test
-    outputs:
-      package-version: ${{ steps.get-version.outputs.version }}
-      can-publish-testpypi: ${{ steps.check-versions.outputs.can-publish-testpypi }}
-      can-publish-pypi: ${{ steps.check-versions.outputs.can-publish-pypi }}
-      testpypi-exists: ${{ steps.check-versions.outputs.testpypi-exists }}
-      pypi-exists: ${{ steps.check-versions.outputs.pypi-exists }}
 
     steps:
     - uses: actions/checkout@v4
@@ -83,231 +75,62 @@ jobs:
     - name: Get package version
       id: get-version
       run: |
-        # Use dedicated script to get version
         VERSION=$(grep "__version__" dmdslab/__init__.py | head -1 | sed 's/.*=.*[\"'\'']\([^\"'\'']*\)[\"'\''].*/\1/')
         echo "📦 Package version: $VERSION"
         echo "version=$VERSION" >> $GITHUB_OUTPUT
-        
-        # Debug output
-        echo "::notice title=Package Version::Found version $VERSION"
-
-    - name: Check versions on repositories
-      id: check-versions
-      run: |
-        VERSION="${{ steps.get-version.outputs.version }}"
-        
-        # Initialize variables
-        CAN_PUBLISH_TESTPYPI="false"
-        CAN_PUBLISH_PYPI="false"
-        TESTPYPI_EXISTS="false"
-        PYPI_EXISTS="false"
-        
-        # Check TestPyPI
-        echo "🔍 Checking TestPyPI for version $VERSION..."
-        if curl -s --fail "https://test.pypi.org/pypi/DmDSLab/$VERSION/json" > /dev/null 2>&1; then
-          echo "⚠️ Version $VERSION already exists on TestPyPI"
-          TESTPYPI_EXISTS="true"
-        else
-          echo "✅ Version $VERSION not found on TestPyPI - can publish"
-          CAN_PUBLISH_TESTPYPI="true"
-        fi
-        
-        # Check PyPI
-        echo "🔍 Checking PyPI for version $VERSION..."
-        if curl -s --fail "https://pypi.org/pypi/DmDSLab/$VERSION/json" > /dev/null 2>&1; then
-          echo "⚠️ Version $VERSION already exists on PyPI"
-          PYPI_EXISTS="true"
-        else
-          echo "✅ Version $VERSION not found on PyPI - can publish"
-          CAN_PUBLISH_PYPI="true"
-        fi
-        
-        # Set outputs explicitly
-        echo "can-publish-testpypi=$CAN_PUBLISH_TESTPYPI" >> $GITHUB_OUTPUT
-        echo "can-publish-pypi=$CAN_PUBLISH_PYPI" >> $GITHUB_OUTPUT
-        echo "testpypi-exists=$TESTPYPI_EXISTS" >> $GITHUB_OUTPUT
-        echo "pypi-exists=$PYPI_EXISTS" >> $GITHUB_OUTPUT
-        
-        # Debug outputs
-        echo "::notice title=TestPyPI Status::can-publish-testpypi=$CAN_PUBLISH_TESTPYPI, exists=$TESTPYPI_EXISTS"
-        echo "::notice title=PyPI Status::can-publish-pypi=$CAN_PUBLISH_PYPI, exists=$PYPI_EXISTS"
 
     - name: Build package
       run: python -m build
 
-    - name: Check package
+    - name: Check package with twine
       run: twine check dist/*
+
+    - name: List distribution files
+      run: |
+        echo "📦 Built distributions:"
+        ls -la dist/
 
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: dist
+        name: dist-${{ steps.get-version.outputs.version }}
         path: dist/
 
-    - name: Debug final outputs
+    - name: Create build summary
       run: |
-        echo "📊 Final outputs from build job:"
-        echo "package-version: ${{ steps.get-version.outputs.version }}"
-        echo "can-publish-testpypi: ${{ steps.check-versions.outputs.can-publish-testpypi }}"
-        echo "can-publish-pypi: ${{ steps.check-versions.outputs.can-publish-pypi }}"
-        echo "testpypi-exists: ${{ steps.check-versions.outputs.testpypi-exists }}"
-        echo "pypi-exists: ${{ steps.check-versions.outputs.pypi-exists }}"
-
-  # 🎯 Публикация на TestPyPI - с отладкой и упрощенным условием
-  publish-test:
-    name: Publish to TestPyPI
-    runs-on: ubuntu-latest
-    needs: build
-    if: |
-      github.event_name == 'push' && 
-      github.ref == 'refs/heads/develop'
-    environment:
-      name: testpypi
-      url: https://test.pypi.org/project/DmDSLab/
-    permissions:
-      id-token: write
-
-    steps:
-    - name: Debug build outputs
-      run: |
-        echo "🔍 Debugging build outputs:"
-        echo "Event: ${{ github.event_name }}"
-        echo "Ref: ${{ github.ref }}"
-        echo "can-publish-testpypi: '${{ needs.build.outputs.can-publish-testpypi }}'"
-        echo "testpypi-exists: '${{ needs.build.outputs.testpypi-exists }}'"
-        echo "package-version: '${{ needs.build.outputs.package-version }}'"
-        
-        # Check if we should skip
-        if [[ "${{ needs.build.outputs.can-publish-testpypi }}" != "true" ]]; then
-          echo "⚠️ Skipping publication - version already exists on TestPyPI"
-          echo "::warning title=TestPyPI Skip::Version ${{ needs.build.outputs.package-version }} already exists on TestPyPI"
-          exit 0
-        fi
-
-    - name: Download build artifacts
-      if: needs.build.outputs.can-publish-testpypi == 'true'
-      uses: actions/download-artifact@v4
-      with:
-        name: dist
-        path: dist/
-
-    - name: Publish to TestPyPI
-      if: needs.build.outputs.can-publish-testpypi == 'true'
-      uses: pypa/gh-action-pypi-publish@release/v1
-      with:
-        repository-url: https://test.pypi.org/legacy/
-        skip-existing: true
-
-    - name: Success notification
-      if: needs.build.outputs.can-publish-testpypi == 'true'
-      run: |
-        echo "🎉 Successfully published DmDSLab v${{ needs.build.outputs.package-version }} to TestPyPI!"
-        echo "📦 Install with: pip install -i https://test.pypi.org/simple/ DmDSLab==${{ needs.build.outputs.package-version }}"
-
-    - name: Skip notification
-      if: needs.build.outputs.can-publish-testpypi != 'true'
-      run: |
-        echo "ℹ️ Version ${{ needs.build.outputs.package-version }} already exists on TestPyPI"
-        echo "🔄 To publish a new version, update the version in dmdslab/__init__.py"
-
-  # 🎯 Публикация на PyPI - с отладкой и упрощенным условием
-  publish-pypi:
-    name: Publish to PyPI
-    runs-on: ubuntu-latest
-    needs: build
-    if: |
-      github.event_name == 'release' && 
-      github.event.action == 'published'
-    environment:
-      name: pypi
-      url: https://pypi.org/project/DmDSLab/
-    permissions:
-      id-token: write
-
-    steps:
-    - name: Debug build outputs
-      run: |
-        echo "🔍 Debugging build outputs:"
-        echo "Event: ${{ github.event_name }}"
-        echo "Action: ${{ github.event.action }}"
-        echo "can-publish-pypi: '${{ needs.build.outputs.can-publish-pypi }}'"
-        echo "pypi-exists: '${{ needs.build.outputs.pypi-exists }}'"
-        echo "package-version: '${{ needs.build.outputs.package-version }}'"
-        
-        # Check if we should fail
-        if [[ "${{ needs.build.outputs.can-publish-pypi }}" != "true" ]]; then
-          echo "❌ Cannot publish - version already exists on PyPI!"
-          exit 1
-        fi
-
-    - name: Download build artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: dist
-        path: dist/
-
-    - name: Publish to PyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
-
-    - name: Success notification
-      run: |
-        echo "🚀 Successfully published DmDSLab v${{ needs.build.outputs.package-version }} to PyPI!"
-        echo "📦 Install with: pip install DmDSLab==${{ needs.build.outputs.package-version }}"
-
-  # 📊 Сводная информация - всегда выполняется
-  summary:
-    name: Build Summary
-    runs-on: ubuntu-latest
-    needs: [build, publish-test, publish-pypi]
-    if: always() && (needs.build.result == 'success')
-
-    steps:
-    - name: Print summary
-      run: |
+        VERSION="${{ steps.get-version.outputs.version }}"
         echo "## 📊 Build Summary" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Package Version:** ${{ needs.build.outputs.package-version }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Package:** DmDSLab" >> $GITHUB_STEP_SUMMARY
+        echo "**Version:** $VERSION" >> $GITHUB_STEP_SUMMARY
+        echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        
-        echo "### Status Check Results:" >> $GITHUB_STEP_SUMMARY
-        echo "- **TestPyPI exists:** ${{ needs.build.outputs.testpypi-exists }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **PyPI exists:** ${{ needs.build.outputs.pypi-exists }}" >> $GITHUB_STEP_SUMMARY
+        echo "### 📦 Build Artifacts" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        ls -la dist/ >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        
-        echo "### Publication Results:" >> $GITHUB_STEP_SUMMARY
-        
-        # TestPyPI status
-        if [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
-          if [[ "${{ needs.publish-test.result }}" == "success" ]]; then
-            if [[ "${{ needs.build.outputs.can-publish-testpypi }}" == "true" ]]; then
-              echo "✅ **TestPyPI:** Published successfully" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "⏭️ **TestPyPI:** Skipped (version exists)" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "❌ **TestPyPI:** Failed or skipped" >> $GITHUB_STEP_SUMMARY
-          fi
-        else
-          echo "➖ **TestPyPI:** Not applicable for this run" >> $GITHUB_STEP_SUMMARY
-        fi
-        
-        # PyPI status
-        if [[ "${{ github.event_name }}" == "release" ]]; then
-          if [[ "${{ needs.publish-pypi.result }}" == "success" ]]; then
-            echo "✅ **PyPI:** Published successfully" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${{ needs.build.outputs.can-publish-pypi }}" != "true" ]]; then
-            echo "❌ **PyPI:** Version already exists" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ **PyPI:** Failed" >> $GITHUB_STEP_SUMMARY
-          fi
-        else
-          echo "➖ **PyPI:** Not applicable for this run" >> $GITHUB_STEP_SUMMARY
-        fi
+        echo "### 🚀 Manual Publishing" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "To publish this version manually:" >> $GITHUB_STEP_SUMMARY
+        echo '```bash' >> $GITHUB_STEP_SUMMARY
+        echo "# For TestPyPI:" >> $GITHUB_STEP_SUMMARY
+        echo "./publish_to_pypi.ps1 -TestRepo" >> $GITHUB_STEP_SUMMARY
+        echo "# or" >> $GITHUB_STEP_SUMMARY
+        echo "./bash_publish_script.sh --test-repo" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "# For PyPI:" >> $GITHUB_STEP_SUMMARY
+        echo "./publish_to_pypi.ps1" >> $GITHUB_STEP_SUMMARY
+        echo "# or" >> $GITHUB_STEP_SUMMARY
+        echo "./bash_publish_script.sh" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
 
   docs:
     name: Build documentation
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    needs: test
 
     steps:
     - uses: actions/checkout@v4

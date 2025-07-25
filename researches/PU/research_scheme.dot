@@ -1,0 +1,254 @@
+digraph PULearningEnhancedFlow {
+    // ===== ENHANCED CLEAN DESIGN =====
+    graph [
+        layout=dot,
+        rankdir=LR,
+        bgcolor="transparent",
+        fontname="Arial",
+        fontsize=20,
+        fontcolor="#E0E0E0",
+        label="PU Learning Research Pipeline",
+        labelloc=t,
+        labeljust=c,
+        margin=1.0,
+        nodesep=0.8,
+        ranksep=1.8,
+        splines=ortho,
+        compound=true
+    ];
+    
+    node [
+        fontname="Arial",
+        fontsize=11,
+        fontcolor="#F0F0F0",
+        shape=box,
+        style="filled,rounded",
+        fillcolor="#2A2A2A",
+        color="#2A2A2A",
+        penwidth=0,
+        margin="0.4,0.3",
+        width=3.0,
+        height=1.4
+    ];
+    
+    edge [
+        color="#555555",
+        penwidth=2.5,
+        arrowsize=0.8,
+        fontname="Arial",
+        fontsize=9,
+        fontcolor="#808080"
+    ];
+    
+
+    
+    // ===== DATA FOUNDATION =====
+    data [
+        label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="3">
+            <TR><TD><B><FONT POINT-SIZE="14">Data Repository</FONT></B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="10" COLOR="#A0A0A0">━━━━━━━━━━━━━━</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Curated UCI datasets</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Binary classification</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Quality metrics</FONT></TD></TR>
+        </TABLE>>,
+        fillcolor="#1E3A5F",
+        width=3.5
+    ];
+    
+    pu [
+        label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="3">
+            <TR><TD><B><FONT POINT-SIZE="14">PU Simulation</FONT></B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="10" COLOR="#A0A0A0">━━━━━━━━━━━━━━</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Scenario generation</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Selection protocols</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Bias control</FONT></TD></TR>
+        </TABLE>>,
+        fillcolor="#2C5282",
+        width=3.5
+    ];
+    
+    // ===== METHODS =====
+    baseline [
+        label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="3">
+            <TR><TD><B><FONT POINT-SIZE="14">Baseline Methods</FONT></B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="10" COLOR="#A0A0A0">━━━━━━━━━━━━━━</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Treat U as N approach</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Traditional ML: LR, RF, SVM</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Boosting: XGB, LGBM, CAT</FONT></TD></TR>
+        </TABLE>>,
+        fillcolor="#1B4332",
+        width=3.8
+    ];
+    
+    classical [
+        label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="3">
+            <TR><TD><B><FONT POINT-SIZE="14">Classical PU</FONT></B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="10" COLOR="#A0A0A0">━━━━━━━━━━━━━━</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Two-step: Spy, 1-DNF</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Probabilistic: EN, Ward</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Bagging-based methods</FONT></TD></TR>
+        </TABLE>>,
+        fillcolor="#5D1A1A",
+        width=3.8
+    ];
+    
+    modern [
+        label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="3">
+            <TR><TD><B><FONT POINT-SIZE="14">Modern PU</FONT></B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="10" COLOR="#A0A0A0">━━━━━━━━━━━━━━</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Risk-based: uPU, nnPU</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Deep learning: PU-Net</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Generative: GAN, VAE</FONT></TD></TR>
+        </TABLE>>,
+        fillcolor="#3E1F47",
+        width=3.8
+    ];
+    
+    // ===== EXPERIMENTAL CORE =====
+    core [
+        label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="5">
+            <TR><TD><B><FONT POINT-SIZE="16">Experimental</FONT></B></TD></TR>
+            <TR><TD><B><FONT POINT-SIZE="16">Core</FONT></B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="10" COLOR="#FFA726">━━━━━━━━━</FONT></TD></TR>
+            <TR><TD><FONT POINT-SIZE="10">Orchestration</FONT></TD></TR>
+        </TABLE>>,
+        shape=circle,
+        fillcolor="#7C2E00",
+        width=2.5,
+        height=2.5,
+        penwidth=2,
+        color="#B04000"
+    ];
+    
+    opt [
+        label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="3">
+            <TR><TD><B><FONT POINT-SIZE="14">Optimization</FONT></B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="10" COLOR="#A0A0A0">━━━━━━━━━━━━━━</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Automated HPO</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Multi-objective</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Resource control</FONT></TD></TR>
+        </TABLE>>,
+        fillcolor="#5D4E37",
+        shape=hexagon,
+        width=3.5,
+        height=2.0
+    ];
+    
+    // ===== ANALYSIS =====
+    eval [
+        label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="3">
+            <TR><TD><B><FONT POINT-SIZE="14">Evaluation</FONT></B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="10" COLOR="#A0A0A0">━━━━━━━━━━━━━━</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Performance metrics</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• PU-specific measures</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Efficiency analysis</FONT></TD></TR>
+        </TABLE>>,
+        fillcolor="#003D4F",
+        width=3.8
+    ];
+    
+    stats [
+        label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="3">
+            <TR><TD><B><FONT POINT-SIZE="14">Validation</FONT></B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="10" COLOR="#A0A0A0">━━━━━━━━━━━━━━</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Statistical tests</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Cross-validation</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Robustness checks</FONT></TD></TR>
+        </TABLE>>,
+        fillcolor="#1A3A52",
+        width=3.8
+    ];
+    
+    viz [
+        label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="3">
+            <TR><TD><B><FONT POINT-SIZE="14">Visualization</FONT></B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="10" COLOR="#A0A0A0">━━━━━━━━━━━━━━</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Comparative charts</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Interactive dashboards</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Result synthesis</FONT></TD></TR>
+        </TABLE>>,
+        fillcolor="#3E2C5C",
+        shape=octagon,
+        width=3.8,
+        height=2.0
+    ];
+    
+    // ===== OUTPUTS =====
+    insights [
+        label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="3">
+            <TR><TD><B><FONT POINT-SIZE="14">Research Insights</FONT></B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="10" COLOR="#A0A0A0">━━━━━━━━━━━━━━</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Method rankings</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Best practices</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Decision framework</FONT></TD></TR>
+        </TABLE>>,
+        fillcolor="#424242",
+        shape=note,
+        width=3.8,
+        height=2.0
+    ];
+    
+    deliver [
+        label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="3">
+            <TR><TD><B><FONT POINT-SIZE="14">Deliverables</FONT></B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="10" COLOR="#A0A0A0">━━━━━━━━━━━━━━</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Open-source library</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Documentation</FONT></TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="10">• Research paper</FONT></TD></TR>
+        </TABLE>>,
+        fillcolor="#1F2937",
+        shape=folder,
+        width=3.8,
+        height=2.0,
+        penwidth=2,
+        color="#3A4A5F"
+    ];
+    
+    // ===== EDGES WITH LABELS =====
+    data -> pu [label="prepare"];
+    pu -> baseline [label="generate\nscenarios"];
+    pu -> classical;
+    pu -> modern;
+    
+    baseline -> core [color="#4DB6AC"];
+    classical -> core [color="#EF5350"];
+    modern -> core [color="#AB47BC"];
+    
+    core -> opt [color="#FF8A65", penwidth=3, label="configure"];
+    opt -> eval [color="#FFB74D", penwidth=3, label="execute"];
+    
+    eval -> stats [label="analyze"];
+    stats -> viz [label="validate"];
+    viz -> insights [color="#9575CD", penwidth=3, label="synthesize"];
+    insights -> deliver [label="package"];
+    
+    // Feedback loop
+    insights -> pu [
+        style=dashed,
+        constraint=false,
+        color="#3A3A3A",
+        label="refine"
+    ];
+    
+    // ===== LAYOUT =====
+    {rank=same; baseline; classical; modern;}
+    {rank=same; eval; stats; viz;}
+    
+    // ===== LEGEND =====
+    legend [
+        label=<<TABLE BORDER="0" CELLPADDING="6">
+            <TR><TD COLSPAN="5"><B>Legend</B></TD></TR>
+            <TR>
+                <TD BGCOLOR="#1E3A5F"><FONT COLOR="#FFFFFF">Data</FONT></TD>
+                <TD BGCOLOR="#1B4332"><FONT COLOR="#FFFFFF">Baseline</FONT></TD>
+                <TD BGCOLOR="#5D1A1A"><FONT COLOR="#FFFFFF">Classical</FONT></TD>
+                <TD BGCOLOR="#3E1F47"><FONT COLOR="#FFFFFF">Modern</FONT></TD>
+                <TD BGCOLOR="#424242"><FONT COLOR="#FFFFFF">Output</FONT></TD>
+            </TR>
+        </TABLE>>,
+        shape=plaintext,
+        fontsize=9
+    ];
+    
+    {rank=min; legend;}
+}

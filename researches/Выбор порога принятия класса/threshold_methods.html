@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Руководство по выбору порогов вероятности для псевдо-разметки</title>
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --secondary-color: #7c3aed;
+            --success-color: #10b981;
+            --warning-color: #f59e0b;
+            --danger-color: #ef4444;
+            --dark-color: #1f2937;
+            --light-bg: #f9fafb;
+            --border-color: #e5e7eb;
+            --text-muted: #6b7280;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--dark-color);
+            background-color: var(--light-bg);
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            padding: 60px 0;
+            text-align: center;
+            margin-bottom: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 20px;
+            font-weight: 700;
+        }
+        
+        .subtitle {
+            font-size: 1.2em;
+            opacity: 0.9;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        nav {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            margin-bottom: 40px;
+            position: sticky;
+            top: 20px;
+            z-index: 100;
+        }
+        
+        nav ul {
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 20px;
+        }
+        
+        nav a {
+            color: var(--dark-color);
+            text-decoration: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            transition: all 0.3s;
+            font-weight: 500;
+        }
+        
+        nav a:hover {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        
+        .section {
+            background: white;
+            border-radius: 12px;
+            padding: 40px;
+            margin-bottom: 40px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        
+        h2 {
+            color: var(--primary-color);
+            margin-bottom: 30px;
+            font-size: 2em;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        h3 {
+            color: var(--dark-color);
+            margin: 30px 0 20px;
+            font-size: 1.5em;
+        }
+        
+        .icon {
+            font-size: 1.2em;
+        }
+        
+        /* Таблица методов */
+        .methods-table {
+            overflow-x: auto;
+            margin: 30px 0;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95em;
+        }
+        
+        th {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+        }
+        
+        td {
+            padding: 15px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        tr:hover {
+            background-color: var(--light-bg);
+        }
+        
+        .method-name {
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+        
+        .complexity-low {
+            color: var(--success-color);
+            font-weight: 600;
+        }
+        
+        .complexity-medium {
+            color: var(--warning-color);
+            font-weight: 600;
+        }
+        
+        .complexity-high {
+            color: var(--danger-color);
+            font-weight: 600;
+        }
+        
+        /* Карточки методов */
+        .method-card {
+            background: var(--light-bg);
+            border-radius: 12px;
+            padding: 30px;
+            margin: 20px 0;
+            border-left: 4px solid var(--primary-color);
+        }
+        
+        .method-card h4 {
+            color: var(--primary-color);
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+        
+        .formula {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            margin: 15px 0;
+            border: 1px solid var(--border-color);
+            overflow-x: auto;
+        }
+        
+        code {
+            background: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+        
+        pre {
+            background: #1f2937;
+            color: #e5e7eb;
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 15px 0;
+        }
+        
+        pre code {
+            background: none;
+            color: inherit;
+            padding: 0;
+        }
+        
+        /* Блоки рекомендаций */
+        .recommendation {
+            background: #eef2ff;
+            border-left: 4px solid var(--primary-color);
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        
+        .warning {
+            background: #fef3c7;
+            border-left: 4px solid var(--warning-color);
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        
+        /* Быстрый выбор */
+        .quick-select {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+        
+        .select-card {
+            background: var(--light-bg);
+            padding: 25px;
+            border-radius: 12px;
+            border: 2px solid transparent;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+        
+        .select-card:hover {
+            border-color: var(--primary-color);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        .select-card h5 {
+            color: var(--primary-color);
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+        
+        .tag {
+            display: inline-block;
+            padding: 4px 12px;
+            background: var(--primary-color);
+            color: white;
+            border-radius: 20px;
+            font-size: 0.85em;
+            margin: 2px;
+        }
+        
+        .tag.secondary {
+            background: var(--secondary-color);
+        }
+        
+        .tag.success {
+            background: var(--success-color);
+        }
+        
+        .tag.warning {
+            background: var(--warning-color);
+        }
+        
+        /* Списки */
+        ul, ol {
+            margin: 15px 0 15px 30px;
+        }
+        
+        li {
+            margin: 8px 0;
+        }
+        
+        /* Адаптивность */
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            header {
+                padding: 40px 20px;
+            }
+            
+            h1 {
+                font-size: 2em;
+            }
+            
+            .section {
+                padding: 20px;
+            }
+            
+            nav ul {
+                flex-direction: column;
+                gap: 10px;
+            }
+            
+            table {
+                font-size: 0.85em;
+            }
+            
+            th, td {
+                padding: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎯 Методы выбора порогов вероятности</h1>
+        </header>
+        
+        <nav>
+            <ul>
+                <li><a href="#overview">Обзор</a></li>
+                <li><a href="#table">Таблица методов</a></li>
+                <li><a href="#quick-select">Быстрый выбор</a></li>
+                <li><a href="#statistical">Статистические</a></li>
+                <li><a href="#business">Бизнес-методы</a></li>
+                <li><a href="#heuristic">Эвристические</a></li>
+                <li><a href="#multiclass">Многоклассовые</a></li>
+                <li><a href="#adaptive">Адаптивные</a></li>
+                <li><a href="#uncertainty">Неопределенность</a></li>
+            </ul>
+        </nav>
+        
+        <section id="overview" class="section">
+            <h2><span class="icon">📖</span> Обзор</h2>
+            <p>Выбор порога вероятности — критический этап в задачах псевдо-разметки и полуконтролируемого обучения. От правильного выбора порога зависит баланс между количеством используемых неразмеченных данных и качеством псевдо-меток.</p>
+            
+            <div class="recommendation">
+                <strong>💡 Ключевой принцип:</strong> В псевдо-разметке качество важнее количества. Лучше использовать меньше данных с высокой уверенностью, чем много данных с шумными метками.
+            </div>
+            
+            <h3>Основные подходы к выбору порога</h3>
+            <ul>
+                <li><strong>Фиксированные пороги:</strong> Простые в реализации, но могут быть неоптимальными</li>
+                <li><strong>Статистическая оптимизация:</strong> Максимизация метрик качества на валидации</li>
+                <li><strong>Адаптивные методы:</strong> Автоматическая корректировка в процессе обучения</li>
+                <li><strong>Учет неопределенности:</strong> Явное моделирование уверенности модели</li>
+            </ul>
+        </section>
+        
+        <section id="table" class="section">
+            <h2><span class="icon">📊</span> Сравнительная таблица методов</h2>
+            <div class="methods-table">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Метод</th>
+                            <th>Тип задачи</th>
+                            <th>Формула</th>
+                            <th>Требует валидацию</th>
+                            <th>Сложность</th>
+                            <th>Типичные значения</th>
+                            <th>Когда использовать</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="method-name">Оптимизация по F1</td>
+                            <td>Бинарная</td>
+                            <td><code>F1 = 2·(P·R)/(P+R)</code></td>
+                            <td>Да</td>
+                            <td class="complexity-low">Низкая</td>
+                            <td>0.5-0.7</td>
+                            <td>Сбалансированные классы, стандартные задачи</td>
+                        </tr>
+                        <tr>
+                            <td class="method-name">Статистика Юдена</td>
+                            <td>Бинарная</td>
+                            <td><code>J = TPR + TNR - 1</code></td>
+                            <td>Да</td>
+                            <td class="complexity-low">Низкая</td>
+                            <td>0.3-0.6</td>
+                            <td>Баланс ошибок</td>
+                        </tr>
+                        <tr>
+                            <td class="method-name">Учет стоимости ошибок</td>
+                            <td>Бинарная</td>
+                            <td><code>Cost = FP·C₀₁ + FN·C₁₀</code></td>
+                            <td>Да</td>
+                            <td class="complexity-medium">Средняя</td>
+                            <td>0.1-0.4</td>
+                            <td>Не равная стоимость ошибок</td>
+                        </tr>
+                        <tr>
+                            <td class="method-name">Процентильный</td>
+                            <td>Любая</td>
+                            <td><code>τ = quantile(p, q)</code></td>
+                            <td>Нет</td>
+                            <td class="complexity-low">Низкая</td>
+                            <td>70-90%</td>
+                            <td>Быстрый baseline, контроль объема</td>
+                        </tr>
+                        <tr>
+                            <td class="method-name">Энтропийный</td>
+                            <td>Многоклассовая</td>
+                            <td><code>H = -Σ p·log(p)</code></td>
+                            <td>Нет</td>
+                            <td class="complexity-low">Низкая</td>
+                            <td>H < 0.5-1.0</td>
+                            <td>Много классов (10+)</td>
+                        </tr>
+                        <tr>
+                            <td class="method-name">Метод отрыва (Margin)</td>
+                            <td>Многоклассовая</td>
+                            <td><code>margin = p₁ - p₂</code></td>
+                            <td>Нет</td>
+                            <td class="complexity-low">Низкая</td>
+                            <td>&gt; 0.1-0.3</td>
+                            <td>Похожие классы, fine-grained</td>
+                        </tr>
+                        <tr>
+                            <td class="method-name">Температурная калибровка</td>
+                            <td>Многоклассовая</td>
+                            <td><code>p = softmax(z/T)</code></td>
+                            <td>Да</td>
+                            <td class="complexity-medium">Средняя</td>
+                            <td>T = 1.5-2.5</td>
+                            <td>Улучшение калибровки</td>
+                        </tr>
+                        <tr>
+                            <td class="method-name">Самоадаптивный</td>
+                            <td>Любая</td>
+                            <td><code>τₜ = λ·τₜ₋₁ + (1-λ)·p̄ₜ</code></td>
+                            <td>Нет</td>
+                            <td class="complexity-medium">Средняя</td>
+                            <td>α = 0.1-0.3</td>
+                            <td>Длительное обучение</td>
+                        </tr>
+                        <tr>
+                            <td class="method-name">Monte Carlo Dropout</td>
+                            <td>Любая</td>
+                            <td><code>σ² = Var[p(y|x)]</code></td>
+                            <td>Нет</td>
+                            <td class="complexity-high">Высокая</td>
+                            <td>σ < 0.1-0.2</td>
+                            <td>Критичные приложения</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        
+        <section id="quick-select" class="section">
+            <h2><span class="icon">⚡</span> Быстрый выбор метода</h2>
+            
+            <div class="quick-select">
+                <div class="select-card">
+                    <h5>У меня мало данных (&lt; 100 примеров)</h5>
+                    <p>Используйте консервативные подходы для минимизации шума</p>
+                    <div>
+                        <span class="tag">Фиксированный 0.95</span>
+                        <span class="tag">Процентиль 90%</span>
+                    </div>
+                </div>
+                
+                <div class="select-card">
+                    <h5>Классы несбалансированы</h5>
+                    <p>Методы, учитывающие дисбаланс в метриках</p>
+                    <div>
+                        <span class="tag">Статистика Юдена</span>
+                        <span class="tag">Учет стоимости</span>
+                    </div>
+                </div>
+                
+                <div class="select-card">
+                    <h5>Много классов (10+)</h5>
+                    <p>Работа с полным распределением вероятностей</p>
+                    <div>
+                        <span class="tag">Энтропийный</span>
+                        <span class="tag">Температурная калибровка</span>
+                    </div>
+                </div>
+                
+                <div class="select-card">
+                    <h5>Критичные ошибки</h5>
+                    <p>Оценка и учет неопределенности модели</p>
+                    <div>
+                        <span class="tag">Monte Carlo Dropout</span>
+                        <span class="tag">Фиксированный 0.95+</span>
+                    </div>
+                </div>
+                
+                <div class="select-card">
+                    <h5>Нет валидационных данных</h5>
+                    <p>Эвристические методы без обучения</p>
+                    <div>
+                        <span class="tag">Процентильный</span>
+                        <span class="tag">Энтропийный</span>
+                    </div>
+                </div>
+                
+                <div class="select-card">
+                    <h5>Нужно быстрое решение</h5>
+                    <p>Простые методы с минимальной настройкой</p>
+                    <div>
+                        <span class="tag">Процентильный 80%</span>
+                        <span class="tag">Фиксированный порог</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <section id="statistical" class="section">
+            <h2><span class="icon">📈</span> Статистические методы</h2>
+            
+            <div class="method-card">
+                <h4>1. Оптимизация по F1-мере</h4>
+                
+                <p>F1-мера представляет собой гармоническое среднее между точностью и полнотой. Это наиболее популярный метод для сбалансированных задач.</p>
+                
+                <div class="formula">
+F1 = 2 · (precision · recall) / (precision + recall)
+
+где:
+precision = TP / (TP + FP)
+recall = TP / (TP + FN)
+                </div>
+                
+                <h5>Алгоритм реализации:</h5>
+                <pre><code>from sklearn.metrics import precision_recall_curve
+
+def optimize_f1_threshold(y_true, y_proba):
+    precisions, recalls, thresholds = precision_recall_curve(y_true, y_proba)
+    f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-10)
+    optimal_idx = np.argmax(f1_scores[:-1])
+    return thresholds[optimal_idx], f1_scores[optimal_idx]
+
+# Применение
+threshold, f1 = optimize_f1_threshold(y_val, probas_val)
+confident_mask = probas_unlabeled >= threshold</code></pre>
+                
+                <div class="recommendation">
+                    <strong>Рекомендации:</strong>
+                    <ul>
+                        <li>Используйте кросс-валидацию для устойчивой оценки порога</li>
+                        <li>Проверяйте стабильность порога на разных фолдах</li>
+                        <li>Для несбалансированных классов рассмотрите weighted F1</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="method-card">
+                <h4>2. Статистика Юдена (Youden's J statistic)</h4>
+                
+                <p>Метод максимизирует сумму чувствительности и специфичности, находя оптимальный баланс между true positive и true negative rates.</p>
+                
+                <div class="formula">
+J = Sensitivity + Specificity - 1 = TPR + TNR - 1
+
+Геометрически: максимальное расстояние от ROC-кривой до диагонали
+                </div>
+                
+                <h5>Применение в медицине:</h5>
+                <pre><code>from sklearn.metrics import roc_curve
+
+def youden_j_threshold(y_true, y_proba):
+    fpr, tpr, thresholds = roc_curve(y_true, y_proba)
+    j_scores = tpr - fpr  # Youden's J statistic
+    optimal_idx = np.argmax(j_scores)
+    return thresholds[optimal_idx], j_scores[optimal_idx]
+
+# Интерпретация для медицинского теста
+threshold, j_score = youden_j_threshold(y_test, probas_test)
+print(f"Оптимальный порог: {threshold:.3f}")
+print(f"Чувствительность: {tpr[optimal_idx]:.1%}")
+print(f"Специфичность: {1-fpr[optimal_idx]:.1%}")</code></pre>
+                
+                <div class="warning">
+                    <strong>Важно:</strong> Метод предполагает равную важность чувствительности и специфичности. В реальных медицинских задачах часто важнее не пропустить болезнь (высокая чувствительность).
+                </div>
+            </div>
+        </section>
+        
+        <section id="business" class="section">
+            <h2><span class="icon">💰</span> Бизнес-ориентированные методы</h2>
+            
+            <div class="method-card">
+                <h4>3. Учет стоимости ошибок (Cost-sensitive)</h4>
+                
+                <p>Метод напрямую оптимизирует бизнес-метрики, учитывая различную стоимость ошибок первого и второго рода.</p>
+                
+                <div class="formula">
+Expected Cost = P(FP) × Cost(FP) + P(FN) × Cost(FN)
+
+Пример для fraud detection:
+- Cost(FP) = $1 (блокировка легитимной транзакции)
+- Cost(FN) = $100 (пропуск мошеннической транзакции)
+                </div>
+                
+                <h5>Реализация с учетом бизнес-логики:</h5>
+                <pre><code>class CostSensitiveThreshold:
+    def __init__(self, cost_fp=1, cost_fn=10):
+        self.cost_fp = cost_fp
+        self.cost_fn = cost_fn
+        
+    def find_optimal_threshold(self, y_true, y_proba):
+        thresholds = np.linspace(0, 1, 1000)
+        costs = []
+        
+        for threshold in thresholds:
+            y_pred = (y_proba >= threshold).astype(int)
+            
+            # Подсчет ошибок
+            fp = np.sum((y_pred == 1) & (y_true == 0))
+            fn = np.sum((y_pred == 0) & (y_true == 1))
+            
+            # Общая стоимость
+            total_cost = fp * self.cost_fp + fn * self.cost_fn
+            costs.append(total_cost)
+        
+        optimal_idx = np.argmin(costs)
+        return thresholds[optimal_idx], costs[optimal_idx]
+    
+    def calculate_savings(self, y_true, y_proba, threshold):
+        """Расчет экономии по сравнению с порогом 0.5"""
+        baseline_cost = self._calculate_cost(y_true, y_proba >= 0.5)
+        optimal_cost = self._calculate_cost(y_true, y_proba >= threshold)
+        savings = baseline_cost - optimal_cost
+        return savings, (savings / baseline_cost) * 100
+
+# Применение для кредитного скоринга
+selector = CostSensitiveThreshold(cost_fp=100, cost_fn=1000)  # FN дороже в 10 раз
+threshold, cost = selector.find_optimal_threshold(y_val, probas_val)
+savings, savings_pct = selector.calculate_savings(y_val, probas_val, threshold)
+
+print(f"Оптимальный порог: {threshold:.3f}")
+print(f"Экономия: ${savings:,.0f} ({savings_pct:.1f}%)")</code></pre>
+                
+                <div class="recommendation">
+                    <strong>Практические советы:</strong>
+                    <ul>
+                        <li>Регулярно обновляйте матрицу стоимостей на основе реальных данных</li>
+                        <li>Учитывайте косвенные затраты (репутация, доверие клиентов)</li>
+                        <li>Проводите A/B тестирование для валидации экономического эффекта</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+        
+        <section id="heuristic" class="section">
+            <h2><span class="icon">💡</span> Эвристические методы</h2>
+            
+            <div class="method-card">
+                <h4>4. Процентильный метод</h4>
+                
+                <p>Простой и эффективный метод, не требующий валидационных данных. Выбирает порог на заданном процентиле распределения вероятностей.</p>
+                
+                <h5>Адаптивная реализация:</h5>
+                <pre><code>class PercentileThresholdSelector:
+    def __init__(self, initial_percentile=80):
+        self.percentile = initial_percentile
+        self.history = []
+        
+    def select_threshold(self, probabilities):
+        """Выбор порога с адаптацией процентиля"""
+        threshold = np.percentile(probabilities, self.percentile)
+        self.history.append({
+            'threshold': threshold,
+            'percentile': self.percentile,
+            'n_selected': np.sum(probabilities >= threshold)
+        })
+        return threshold
+    
+    def adapt_percentile(self, performance_metric):
+        """Адаптация процентиля на основе качества"""
+        if performance_metric < 0.9:  # Если качество упало
+            self.percentile = min(95, self.percentile + 5)
+        elif performance_metric > 0.95:  # Если качество высокое
+            self.percentile = max(70, self.percentile - 2)
+    
+    def get_statistics(self):
+        """Статистика использования"""
+        if not self.history:
+            return None
+        
+        thresholds = [h['threshold'] for h in self.history]
+        return {
+            'mean_threshold': np.mean(thresholds),
+            'std_threshold': np.std(thresholds),
+            'trend': 'increasing' if thresholds[-1] > thresholds[0] else 'decreasing'
+        }
+
+# Использование в итеративном процессе
+selector = PercentileThresholdSelector(initial_percentile=85)
+
+for epoch in range(num_epochs):
+    probas = model.predict_proba(X_unlabeled)[:, 1]
+    threshold = selector.select_threshold(probas)
+    
+    # Отбор уверенных примеров
+    confident_mask = probas >= threshold
+    X_pseudo = X_unlabeled[confident_mask]
+    y_pseudo = (probas[confident_mask] >= 0.5).astype(int)
+    
+    # Обучение и оценка
+    model.fit(np.vstack([X_train, X_pseudo]), 
+              np.hstack([y_train, y_pseudo]))
+    
+    # Адаптация процентиля
+    val_score = model.score(X_val, y_val)
+    selector.adapt_percentile(val_score)</code></pre>
+            </div>
+        </section>
+        
+        <section id="multiclass" class="section">
+            <h2><span class="icon">🎨</span> Методы для многоклассовой классификации</h2>
+            
+            <div class="method-card">
+                <h4>5. Энтропийный метод</h4>
+                
+                <p>Использует энтропию Шеннона для оценки неопределенности в распределении вероятностей по классам.</p>
+                
+                <div class="formula">
+H(p) = -Σᵢ p_i · log(p_i)
+
+Интерпретация:
+- H = 0: полная уверенность (один класс с p=1)
+- H = log(n): полная неопределенность (равномерное распределение)
+                </div>
+                
+                <h5>Продвинутая реализация с визуализацией:</h5>
+                <pre><code>import matplotlib.pyplot as plt
+
+class EntropyThresholdSelector:
+    def __init__(self, max_entropy=0.5):
+        self.max_entropy = max_entropy
+        
+    def calculate_entropy(self, proba_matrix):
+        """Вычисление энтропии для каждого примера"""
+        # Избегаем log(0)
+        proba_matrix = np.clip(proba_matrix, 1e-10, 1)
+        entropy = -np.sum(proba_matrix * np.log(proba_matrix), axis=1)
+        return entropy
+    
+    def select_confident_samples(self, proba_matrix, return_stats=False):
+        """Отбор примеров с низкой энтропией"""
+        entropy = self.calculate_entropy(proba_matrix)
+        confident_mask = entropy < self.max_entropy
+        
+        if return_stats:
+            stats = {
+                'mean_entropy': np.mean(entropy),
+                'median_entropy': np.median(entropy),
+                'selected_ratio': np.mean(confident_mask),
+                'entropy_distribution': entropy
+            }
+            return confident_mask, stats
+        
+        return confident_mask
+    
+    def visualize_entropy_distribution(self, proba_matrix, save_path=None):
+        """Визуализация распределения энтропии"""
+        entropy = self.calculate_entropy(proba_matrix)
+        confident_mask = entropy < self.max_entropy
+        
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        
+        # Гистограмма энтропии
+        ax1.hist(entropy, bins=50, alpha=0.7, color='blue', edgecolor='black')
+        ax1.axvline(self.max_entropy, color='red', linestyle='--', 
+                   label=f'Threshold: {self.max_entropy}')
+        ax1.set_xlabel('Энтропия')
+        ax1.set_ylabel('Количество примеров')
+        ax1.set_title('Распределение энтропии')
+        ax1.legend()
+        
+        # Scatter plot: max probability vs entropy
+        max_proba = np.max(proba_matrix, axis=1)
+        ax2.scatter(entropy[~confident_mask], max_proba[~confident_mask], 
+                   alpha=0.5, s=10, label='Отклонено')
+        ax2.scatter(entropy[confident_mask], max_proba[confident_mask], 
+                   alpha=0.7, s=20, label='Отобрано')
+        ax2.set_xlabel('Энтропия')
+        ax2.set_ylabel('Максимальная вероятность')
+        ax2.set_title('Энтропия vs Максимальная вероятность')
+        ax2.legend()
+        
+        plt.tight_layout()
+        if save_path:
+            plt.savefig(save_path)
+        plt.show()
+
+# Применение для 10-классовой задачи
+selector = EntropyThresholdSelector(max_entropy=1.0)  # log(10) ≈ 2.3
+
+# Анализ распределения
+confident_mask, stats = selector.select_confident_samples(proba_matrix, return_stats=True)
+print(f"Средняя энтропия: {stats['mean_entropy']:.3f}")
+print(f"Отобрано примеров: {stats['selected_ratio']:.1%}")
+
+# Визуализация
+selector.visualize_entropy_distribution(proba_matrix)</code></pre>
+            </div>
+            
+            <div class="method-card">
+                <h4>6. Метод отрыва (Margin-based)</h4>
+                
+                <p>Оценивает уверенность через разность между двумя наиболее вероятными классами. Эффективен для задач с семантически близкими классами.</p>
+                
+                <h5>Комплексная реализация:</h5>
+                <pre><code>class MarginThresholdSelector:
+    def __init__(self, min_margin=0.2):
+        self.min_margin = min_margin
+        
+    def calculate_margins(self, proba_matrix):
+        """Вычисление margin для каждого примера"""
+        # Сортируем вероятности в убывающем порядке
+        sorted_proba = np.sort(proba_matrix, axis=1)[:, ::-1]
+        
+        # Margin = разность между top-2 вероятностями
+        margins = sorted_proba[:, 0] - sorted_proba[:, 1]
+        
+        # Дополнительные метрики
+        top1_confidence = sorted_proba[:, 0]
+        top2_confidence = sorted_proba[:, 1]
+        
+        return margins, top1_confidence, top2_confidence
+    
+    def analyze_confusion_pairs(self, proba_matrix, class_names=None):
+        """Анализ пар классов с низким margin"""
+        margins, top1_conf, top2_conf = self.calculate_margins(proba_matrix)
+        
+        # Находим примеры с низким margin
+        low_margin_mask = margins < self.min_margin
+        low_margin_indices = np.where(low_margin_mask)[0]
+        
+        # Определяем проблемные пары классов
+        top2_classes = np.argsort(proba_matrix, axis=1)[:, -2:]
+        
+        confusion_pairs = {}
+        for idx in low_margin_indices:
+            class1, class2 = sorted(top2_classes[idx])
+            pair = (class1, class2)
+            
+            if pair not in confusion_pairs:
+                confusion_pairs[pair] = {
+                    'count': 0,
+                    'avg_margin': 0,
+                    'examples': []
+                }
+            
+            confusion_pairs[pair]['count'] += 1
+            confusion_pairs[pair]['avg_margin'] += margins[idx]
+            confusion_pairs[pair]['examples'].append(idx)
+        
+        # Вычисляем средние значения
+        for pair in confusion_pairs:
+            confusion_pairs[pair]['avg_margin'] /= confusion_pairs[pair]['count']
+        
+        # Сортируем по частоте
+        sorted_pairs = sorted(confusion_pairs.items(), 
+                            key=lambda x: x[1]['count'], 
+                            reverse=True)
+        
+        return sorted_pairs
+    
+    def adaptive_margin_threshold(self, proba_matrix, percentile=80):
+        """Адаптивный выбор порога на основе распределения margins"""
+        margins, _, _ = self.calculate_margins(proba_matrix)
+        
+        # Выбираем порог на заданном процентиле
+        adaptive_threshold = np.percentile(margins, 100 - percentile)
+        
+        # Ограничиваем минимальным и максимальным значениями
+        adaptive_threshold = np.clip(adaptive_threshold, 0.05, 0.5)
+        
+        return adaptive_threshold
+    
+    def select_with_class_specific_margins(self, proba_matrix, class_margins=None):
+        """Отбор с классо-специфичными порогами margin"""
+        margins, _, _ = self.calculate_margins(proba_matrix)
+        predicted_classes = np.argmax(proba_matrix, axis=1)
+        
+        if class_margins is None:
+            # Используем единый порог
+            confident_mask = margins >= self.min_margin
+        else:
+            # Классо-специфичные пороги
+            confident_mask = np.zeros(len(margins), dtype=bool)
+            for class_idx, class_margin in enumerate(class_margins):
+                class_mask = predicted_classes == class_idx
+                confident_mask[class_mask] = margins[class_mask] >= class_margin
+        
+        return confident_mask
+
+# Применение для fine-grained классификации
+selector = MarginThresholdSelector(min_margin=0.15)
+
+# Анализ проблемных пар классов
+confusion_pairs = selector.analyze_confusion_pairs(proba_matrix, class_names)
+print("Наиболее путаемые пары классов:")
+for (c1, c2), stats in confusion_pairs[:5]:
+    name1 = class_names[c1] if class_names else f"Class_{c1}"
+    name2 = class_names[c2] if class_names else f"Class_{c2}"
+    print(f"{name1} <-> {name2}: {stats['count']} примеров, "
+          f"средний margin: {stats['avg_margin']:.3f}")
+
+# Адаптивный выбор порога
+adaptive_threshold = selector.adaptive_margin_threshold(proba_matrix, percentile=85)
+print(f"\nАдаптивный порог margin: {adaptive_threshold:.3f}")
+
+# Отбор с классо-специфичными порогами
+# Например, для похожих классов устанавливаем более высокий порог
+class_margins = [0.1] * num_classes
+class_margins[similar_class1] = 0.3
+class_margins[similar_class2] = 0.3
+
+confident_mask = selector.select_with_class_specific_margins(proba_matrix, class_margins)</code></pre>
+            </div>
+        </section>
+        
+        <section id="adaptive" class="section">
+            <h2><span class="icon">🔄</span> Адаптивные методы</h2>
+            
+            <div class="method-card">
+                <h4>7. Самоадаптивные пороги (FreeMatch, FlexMatch)</h4>
+                
+                <p>Методы, которые динамически корректируют пороги в процессе обучения на основе статистики предсказаний.</p>
+                
+                <h5>Реализация FreeMatch:</h5>
+                <pre><code>class FreeMatchThreshold:
+    """
+    Реализация адаптивного порога из FreeMatch
+    """
+    def __init__(self, initial_threshold=0.95, momentum=0.999):
+        self.global_threshold = initial_threshold
+        self.class_thresholds = None
+        self.momentum = momentum
+        self.ema_predictions = None
+        self.update_count = 0
+        
+    def update(self, proba_matrix):
+        """Обновление порогов на основе EMA предсказаний"""
+        max_proba = np.max(proba_matrix, axis=1)
+        
+        # Обновляем глобальный порог
+        if self.update_count == 0:
+            self.global_threshold = np.mean(max_proba)
+        else:
+            self.global_threshold = (self.momentum * self.global_threshold + 
+                                   (1 - self.momentum) * np.mean(max_proba))
+        
+        # Обновляем классо-специфичные пороги
+        if self.class_thresholds is None:
+            n_classes = proba_matrix.shape[1]
+            self.class_thresholds = np.full(n_classes, self.global_threshold)
+            self.ema_predictions = np.zeros(n_classes)
+        
+        # EMA для каждого класса
+        class_means = np.mean(proba_matrix, axis=0)
+        self.ema_predictions = (self.momentum * self.ema_predictions + 
+                               (1 - self.momentum) * class_means)
+        
+        # Нормализуем пороги относительно средней уверенности класса
+        relative_confidence = self.ema_predictions / np.max(self.ema_predictions)
+        self.class_thresholds = self.global_threshold * relative_confidence
+        
+        self.update_count += 1
+        
+    def get_mask(self, proba_matrix):
+        """Получение маски уверенных примеров"""
+        max_proba = np.max(proba_matrix, axis=1)
+        predicted_classes = np.argmax(proba_matrix, axis=1)
+        
+        # Применяем классо-специфичные пороги
+        confident_mask = np.zeros(len(proba_matrix), dtype=bool)
+        for i, (prob, pred_class) in enumerate(zip(max_proba, predicted_classes)):
+            if self.class_thresholds is not None:
+                threshold = self.class_thresholds[pred_class]
+            else:
+                threshold = self.global_threshold
+            
+            confident_mask[i] = prob >= threshold
+        
+        return confident_mask
+    
+    def get_statistics(self):
+        """Получение статистики порогов"""
+        stats = {
+            'global_threshold': self.global_threshold,
+            'updates': self.update_count
+        }
+        
+        if self.class_thresholds is not None:
+            stats['class_thresholds'] = self.class_thresholds
+            stats['min_class_threshold'] = np.min(self.class_thresholds)
+            stats['max_class_threshold'] = np.max(self.class_thresholds)
+            stats['threshold_std'] = np.std(self.class_thresholds)
+        
+        return stats
+
+# Использование в обучающем цикле
+threshold_manager = FreeMatchThreshold(initial_threshold=0.95, momentum=0.999)
+
+for epoch in range(num_epochs):
+    # Получаем предсказания для неразмеченных данных
+    with torch.no_grad():
+        logits = model(unlabeled_data)
+        proba = torch.softmax(logits, dim=1).numpy()
+    
+    # Обновляем пороги
+    threshold_manager.update(proba)
+    
+    # Получаем маску уверенных примеров
+    confident_mask = threshold_manager.get_mask(proba)
+    
+    # Создаем псевдо-метки
+    pseudo_labels = np.argmax(proba[confident_mask], axis=1)
+    
+    # Статистика
+    if epoch % 10 == 0:
+        stats = threshold_manager.get_statistics()
+        print(f"Epoch {epoch}: Global threshold: {stats['global_threshold']:.3f}, "
+              f"Selected: {np.mean(confident_mask):.1%}")</code></pre>
+            </div>
+        </section>
+        
+        <section id="uncertainty" class="section">
+            <h2><span class="icon">🎲</span> Методы учета неопределенности</h2>
+            
+            <div class="method-card">
+                <h4>8. Monte Carlo Dropout</h4>
+                
+                <p>Метод оценки эпистемической неопределенности через множественные прогоны модели с активным dropout.</p>
+                
+                <h5>Полная реализация с анализом неопределенности:</h5>
+                <pre><code>import torch
+import torch.nn.functional as F
+
+class MonteCarloUncertainty:
+    """
+    Оценка неопределенности через Monte Carlo Dropout
+    """
+    def __init__(self, n_iterations=50, uncertainty_threshold=0.1):
+        self.n_iterations = n_iterations
+        self.uncertainty_threshold = uncertainty_threshold
+        
+    def predict_with_uncertainty(self, model, x, return_all=False):
+        """
+        Получение предсказаний с оценкой неопределенности
+        
+        Returns:
+            mean_proba: усредненные вероятности
+            uncertainty: эпистемическая неопределенность
+            aleatoric: алеаторная неопределенность (для регрессии)
+        """
+        # Включаем dropout для inference
+        model.train()
+        
+        predictions = []
+        with torch.no_grad():
+            for _ in range(self.n_iterations):
+                logits = model(x)
+                proba = F.softmax(logits, dim=-1)
+                predictions.append(proba.cpu().numpy())
+        
+        predictions = np.array(predictions)
+        
+        # Средние предсказания
+        mean_proba = np.mean(predictions, axis=0)
+        
+        # Эпистемическая неопределенность (разброс предсказаний)
+        epistemic_uncertainty = np.var(predictions, axis=0)
+        
+        # Общая неопределенность для каждого примера
+        # Используем энтропию средних вероятностей
+        predictive_entropy = -np.sum(mean_proba * np.log(mean_proba + 1e-10), axis=1)
+        
+        # Взаимная информация (разность энтропий)
+        individual_entropies = -np.mean(
+            np.sum(predictions * np.log(predictions + 1e-10), axis=2), 
+            axis=0
+        )
+        mutual_information = predictive_entropy - individual_entropies
+        
+        if return_all:
+            return {
+                'mean_proba': mean_proba,
+                'epistemic_uncertainty': epistemic_uncertainty,
+                'predictive_entropy': predictive_entropy,
+                'mutual_information': mutual_information,
+                'all_predictions': predictions
+            }
+        
+        # Для простого использования возвращаем среднее и неопределенность
+        total_uncertainty = np.max(epistemic_uncertainty, axis=1)
+        return mean_proba, total_uncertainty
+    
+    def select_confident_samples(self, model, x, method='epistemic'):
+        """
+        Отбор примеров с низкой неопределенностью
+        
+        Args:
+            method: 'epistemic', 'entropy', 'mutual_info', или 'combined'
+        """
+        results = self.predict_with_uncertainty(model, x, return_all=True)
+        
+        if method == 'epistemic':
+            # Максимальная эпистемическая неопределенность по классам
+            uncertainty = np.max(results['epistemic_uncertainty'], axis=1)
+            confident_mask = uncertainty < self.uncertainty_threshold
+            
+        elif method == 'entropy':
+            # Предсказательная энтропия
+            confident_mask = results['predictive_entropy'] < self.uncertainty_threshold
+            
+        elif method == 'mutual_info':
+            # Взаимная информация
+            confident_mask = results['mutual_information'] < self.uncertainty_threshold
+            
+        elif method == 'combined':
+            # Комбинация методов
+            epistemic_mask = np.max(results['epistemic_uncertainty'], axis=1) < self.uncertainty_threshold
+            entropy_mask = results['predictive_entropy'] < 1.0
+            confident_mask = epistemic_mask & entropy_mask
+            
+        return confident_mask, results
+    
+    def analyze_uncertainty_sources(self, results):
+        """Анализ источников неопределенности"""
+        # Разделяем примеры по уровню неопределенности
+        high_epistemic = np.max(results['epistemic_uncertainty'], axis=1) > 0.1
+        high_entropy = results['predictive_entropy'] > 1.0
+        
+        # Категории неопределенности
+        categories = {
+            'confident': (~high_epistemic) & (~high_entropy),
+            'ambiguous': (~high_epistemic) & high_entropy,  # Модель уверена, но классы близки
+            'uncertain': high_epistemic & (~high_entropy),   # Модель не уверена
+            'unknown': high_epistemic & high_entropy         # Полная неопределенность
+        }
+        
+        stats = {}
+        for name, mask in categories.items():
+            stats[name] = {
+                'count': np.sum(mask),
+                'percentage': np.mean(mask) * 100,
+                'avg_max_proba': np.mean(np.max(results['mean_proba'][mask], axis=1)) if np.any(mask) else 0
+            }
+        
+        return stats
+    
+    def visualize_uncertainty(self, results, save_path=None):
+        """Визуализация различных видов неопределенности"""
+        import matplotlib.pyplot as plt
+        
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        
+        # 1. Эпистемическая vs Алеаторная неопределенность
+        max_epistemic = np.max(results['epistemic_uncertainty'], axis=1)
+        axes[0, 0].scatter(results['predictive_entropy'], max_epistemic, 
+                          alpha=0.5, s=20)
+        axes[0, 0].set_xlabel('Предсказательная энтропия')
+        axes[0, 0].set_ylabel('Эпистемическая неопределенность')
+        axes[0, 0].set_title('Декомпозиция неопределенности')
+        
+        # 2. Распределение неопределенности
+        axes[0, 1].hist(max_epistemic, bins=50, alpha=0.7, label='Эпистемическая')
+        axes[0, 1].hist(results['predictive_entropy'], bins=50, alpha=0.7, label='Энтропия')
+        axes[0, 1].axvline(self.uncertainty_threshold, color='red', linestyle='--')
+        axes[0, 1].set_xlabel('Неопределенность')
+        axes[0, 1].set_ylabel('Количество')
+        axes[0, 1].set_title('Распределение неопределенности')
+        axes[0, 1].legend()
+        
+        # 3. Уверенность vs Неопределенность
+        max_proba = np.max(results['mean_proba'], axis=1)
+        axes[1, 0].scatter(max_proba, max_epistemic, alpha=0.5, s=20)
+        axes[1, 0].set_xlabel('Максимальная вероятность')
+        axes[1, 0].set_ylabel('Эпистемическая неопределенность')
+        axes[1, 0].set_title('Уверенность vs Неопределенность')
+        
+        # 4. Категории неопределенности
+        categories = self.analyze_uncertainty_sources(results)
+        names = list(categories.keys())
+        counts = [categories[n]['count'] for n in names]
+        
+        axes[1, 1].pie(counts, labels=names, autopct='%1.1f%%')
+        axes[1, 1].set_title('Категории неопределенности')
+        
+        plt.tight_layout()
+        if save_path:
+            plt.savefig(save_path)
+        plt.show()
+
+# Применение для критичных задач
+mc_selector = MonteCarloUncertainty(n_iterations=100, uncertainty_threshold=0.05)
+
+# Получение предсказаний с неопределенностью
+confident_mask, results = mc_selector.select_confident_samples(
+    model, X_unlabeled, method='combined'
+)
+
+# Анализ источников неопределенности
+uncertainty_stats = mc_selector.analyze_uncertainty_sources(results)
+print("Анализ неопределенности:")
+for category, stats in uncertainty_stats.items():
+    print(f"{category}: {stats['count']} примеров ({stats['percentage']:.1f}%), "
+          f"средняя уверенность: {stats['avg_max_proba']:.3f}")
+
+# Визуализация
+mc_selector.visualize_uncertainty(results, 'uncertainty_analysis.png')</code></pre>
+                
+                <div class="warning">
+                    <strong>Вычислительные затраты:</strong> MC Dropout требует 50-100 прогонов модели, что увеличивает время inference в соответствующее число раз. Используйте batch processing и GPU для ускорения.
+                </div>
+            </div>
+        </section>
+        
+        <section class="section">
+            <h2><span class="icon">🎯</span> Практические рекомендации</h2>
+            
+            <div class="recommendation">
+                <h4>Пошаговый план внедрения</h4>
+                <ol>
+                    <li><strong>Начните с baseline:</strong> Процентильный метод (80-85%) для быстрой оценки</li>
+                    <li><strong>Проанализируйте данные:</strong> Распределение вероятностей, калибровка модели</li>
+                    <li><strong>Выберите основной метод:</strong> На основе таблицы и характеристик задачи</li>
+                    <li><strong>Настройте параметры:</strong> Используйте валидацию или эвристики</li>
+                    <li><strong>Внедрите мониторинг:</strong> Отслеживайте качество псевдо-меток</li>
+                    <li><strong>Итеративно улучшайте:</strong> Адаптивные методы или комбинации</li>
+                </ol>
+            </div>
+            
+            <div class="warning">
+                <h4>Типичные ошибки и как их избежать</h4>
+                <ul>
+                    <li><strong>Использование порога 0.5 без проверки:</strong> Всегда оптимизируйте порог под вашу задачу</li>
+                    <li><strong>Игнорирование калибровки:</strong> Проверяйте ECE (Expected Calibration Error)</li>
+                    <li><strong>Оптимизация неправильной метрики:</strong> Учитывайте бизнес-требования</li>
+                    <li><strong>Статичные пороги для динамичных данных:</strong> Используйте адаптивные методы</li>
+                    <li><strong>Одинаковые пороги для всех классов:</strong> Рассмотрите класс-специфичные подходы</li>
+                </ul>
+            </div>
+        </section>
+        
+        <footer class="section" style="text-align: center; color: var(--text-muted);">
+            <p>© 2025 Dmatryus Detry | Руководство по выбору порогов вероятности v1.0</p>
+            <p>Создано с ❤️ для исследователей и практиков машинного обучения</p>
+        </footer>
+    </div>
+</body>
+</html>

@@ -2,7 +2,7 @@
 Унифицированный эксперимент с автоматической обработкой категориальных признаков
 ===============================================================================
 
-Добавлена поддержка категориальных данных через различные энкодеры.
+Добавлена поддержка категориальных данных через различные энкодеры и обработка пропусков.
 
 Author: Dmatryus Detry
 License: Apache 2.0
@@ -20,6 +20,7 @@ import seaborn as sns
 from scipy.stats import entropy
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import train_test_split
@@ -55,14 +56,23 @@ except ImportError:
 
 
 class DataPreprocessor:
-    """Класс для автоматической предобработки данных"""
+    """Класс для автоматической предобработки данных с обработкой пропусков"""
 
-    def __init__(self, encoder_type="auto"):
+    def __init__(
+        self,
+        encoder_type="auto",
+        missing_numeric="mean",
+        missing_categorical="most_frequent",
+    ):
         """
         Args:
             encoder_type: 'catboost', 'ordinal', 'auto'
+            missing_numeric: Стратегия для числовых признаков ('mean', 'median', 'most_frequent', 'constant')
+            missing_categorical: Стратегия для категориальных признаков ('most_frequent', 'constant')
         """
         self.encoder_type = encoder_type
+        self.missing_numeric = missing_numeric
+        self.missing_categorical = missing_categorical
         self.feature_encoder = None
         self.target_encoder = None
         self.numeric_features = []
@@ -104,10 +114,20 @@ class DataPreprocessor:
         self.target_encoder = LabelEncoder()
         y_encoded = self.target_encoder.fit_transform(y)
 
-        # Если нет категориальных признаков, возвращаем как есть
+        # Если нет категориальных признаков, обрабатываем только числовые
         if not self.categorical_features:
+            # Pipeline для числовых признаков
+            numeric_pipeline = Pipeline(
+                [
+                    ("imputer", SimpleImputer(strategy=self.missing_numeric)),
+                    ("scaler", StandardScaler()),
+                ]
+            )
+
+            self.feature_encoder = numeric_pipeline
+            X_encoded = self.feature_encoder.fit_transform(X)
             self.fitted = True
-            return X.values, y_encoded
+            return X_encoded, y_encoded
 
         # Выбираем энкодер
         if self.encoder_type == "auto":
@@ -122,44 +142,72 @@ class DataPreprocessor:
         # Создаем препроцессор
         transformers = []
 
-        # Для числовых признаков - стандартизация
+        # Для числовых признаков - imputation + стандартизация
         if self.numeric_features:
-            transformers.append(("num", StandardScaler(), self.numeric_features))
+            numeric_pipeline = Pipeline(
+                [
+                    ("imputer", SimpleImputer(strategy=self.missing_numeric)),
+                    ("scaler", StandardScaler()),
+                ]
+            )
+            transformers.append(("num", numeric_pipeline, self.numeric_features))
 
-        # Для категориальных признаков - энкодинг
+        # Для категориальных признаков - imputation + энкодинг
         if self.categorical_features:
             if encoder_type == "catboost" and HAS_CATBOOST_ENCODER:
-                # CatBoostEncoder требует y для обучения
+                # CatBoostEncoder требует особой обработки
+                # Сначала заполняем пропуски
+                cat_imputer = SimpleImputer(strategy=self.missing_categorical)
+                X_cat = X[self.categorical_features]
+                X_cat_imputed = pd.DataFrame(
+                    cat_imputer.fit_transform(X_cat),
+                    columns=self.categorical_features,
+                    index=X.index,
+                )
+
+                # Затем применяем CatBoostEncoder
                 encoder = CatBoostEncoder(
                     cols=self.categorical_features, return_df=False
                 )
-                # Обучаем отдельно
-                X_cat = X[self.categorical_features]
-                X_cat_encoded = encoder.fit_transform(X_cat, y_encoded)
+                X_cat_encoded = encoder.fit_transform(X_cat_imputed, y_encoded)
 
                 # Собираем обратно
                 X_encoded = X.copy()
                 X_encoded[self.categorical_features] = X_cat_encoded
 
                 self.feature_encoder = encoder
+                self.cat_imputer = cat_imputer
                 self.fitted = True
 
-                # Стандартизируем все признаки
-                scaler = StandardScaler()
-                X_final = scaler.fit_transform(X_encoded)
-                self.scaler = scaler
-
-                return X_final, y_encoded
-            else:
-                # Используем OrdinalEncoder
-                transformers.append(
-                    (
-                        "cat",
-                        OrdinalEncoder(
-                            handle_unknown="use_encoded_value", unknown_value=-1
-                        ),
-                        self.categorical_features,
+                # Обрабатываем числовые признаки
+                if self.numeric_features:
+                    numeric_pipeline = Pipeline(
+                        [
+                            ("imputer", SimpleImputer(strategy=self.missing_numeric)),
+                            ("scaler", StandardScaler()),
+                        ]
                     )
+                    X_num = X_encoded[self.numeric_features]
+                    X_num_processed = numeric_pipeline.fit_transform(X_num)
+                    X_encoded[self.numeric_features] = X_num_processed
+                    self.numeric_pipeline = numeric_pipeline
+
+                return X_encoded.values, y_encoded
+            else:
+                # Используем OrdinalEncoder с imputation
+                categorical_pipeline = Pipeline(
+                    [
+                        ("imputer", SimpleImputer(strategy=self.missing_categorical)),
+                        (
+                            "encoder",
+                            OrdinalEncoder(
+                                handle_unknown="use_encoded_value", unknown_value=-1
+                            ),
+                        ),
+                    ]
+                )
+                transformers.append(
+                    ("cat", categorical_pipeline, self.categorical_features)
                 )
 
         # Создаем и обучаем ColumnTransformer
@@ -180,15 +228,32 @@ class DataPreprocessor:
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
-        if not self.categorical_features:
+        if not self.categorical_features and not self.numeric_features:
             return X.values
 
-        if isinstance(self.feature_encoder, CatBoostEncoder):
+        if hasattr(self, "cat_imputer") and isinstance(
+            self.feature_encoder, CatBoostEncoder
+        ):
+            # Специальная обработка для CatBoostEncoder
             X_encoded = X.copy()
+
+            # Обработка категориальных признаков
             X_cat = X[self.categorical_features]
-            X_cat_encoded = self.feature_encoder.transform(X_cat)
+            X_cat_imputed = pd.DataFrame(
+                self.cat_imputer.transform(X_cat),
+                columns=self.categorical_features,
+                index=X.index,
+            )
+            X_cat_encoded = self.feature_encoder.transform(X_cat_imputed)
             X_encoded[self.categorical_features] = X_cat_encoded
-            return self.scaler.transform(X_encoded)
+
+            # Обработка числовых признаков
+            if hasattr(self, "numeric_pipeline") and self.numeric_features:
+                X_num = X_encoded[self.numeric_features]
+                X_num_processed = self.numeric_pipeline.transform(X_num)
+                X_encoded[self.numeric_features] = X_num_processed
+
+            return X_encoded.values
         else:
             return self.feature_encoder.transform(X)
 
@@ -200,9 +265,9 @@ class DataPreprocessor:
 
 
 class UnifiedThresholdExperimentWithEncoding:
-    """Эксперимент с автоматической обработкой категориальных данных"""
+    """Эксперимент с автоматической обработкой категориальных данных и пропусков"""
 
-    def __init__(self, output_dir: str = "unified_experiments", encoder_type="auto"):
+    def __init__(self, output_dir: str = "experiments", encoder_type="auto"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.manager = UCIDatasetManager()
@@ -291,7 +356,7 @@ class UnifiedThresholdExperimentWithEncoding:
                     random_state=42,
                 )
 
-                # Создаем препроцессор
+                # Создаем препроцессор с обработкой пропусков
                 preprocessor = DataPreprocessor(encoder_type=self.encoder_type)
 
                 # Обучаем препроцессор и преобразуем данные
@@ -396,6 +461,20 @@ class UnifiedThresholdExperimentWithEncoding:
                         except Exception as e:
                             print(f"    {method_name}: Error - {str(e)}")
 
+                    # Сохраняем результаты перед визуализацией
+                    experiment_result = {
+                        "dataset": dataset_info,
+                        "model": model_name,
+                        "val_accuracy": val_accuracy,
+                        "method_results": method_results,
+                        "preprocessing": {
+                            "encoder_type": self.encoder_type,
+                            "n_categorical": len(preprocessor.categorical_features),
+                            "n_numeric": len(preprocessor.numeric_features),
+                        },
+                    }
+                    self.results.append(experiment_result)
+
                     # Визуализация результатов
                     self._create_visualizations(
                         val_proba_for_methods,
@@ -405,21 +484,7 @@ class UnifiedThresholdExperimentWithEncoding:
                         method_results,
                         dataset_info,
                         model_name,
-                    )
-
-                    # Сохраняем результаты
-                    self.results.append(
-                        {
-                            "dataset": dataset_info,
-                            "model": model_name,
-                            "val_accuracy": val_accuracy,
-                            "method_results": method_results,
-                            "preprocessing": {
-                                "encoder_type": self.encoder_type,
-                                "n_categorical": len(preprocessor.categorical_features),
-                                "n_numeric": len(preprocessor.numeric_features),
-                            },
-                        }
+                        val_accuracy,
                     )
 
             except Exception as e:
@@ -441,6 +506,7 @@ class UnifiedThresholdExperimentWithEncoding:
         method_results,
         dataset_info,
         model_name,
+        val_accuracy,
     ):
         """Создание визуализаций"""
         task_type = dataset_info["actual_type"]
@@ -529,7 +595,7 @@ Feature Types:
 - Categorical: {dataset_info['n_categorical']}
 - Numeric: {dataset_info['n_numeric']}
 
-Validation Accuracy: {self.results[-1]['val_accuracy']:.3f}
+Validation Accuracy: {val_accuracy:.3f}
         """
         ax.text(
             0.1,
@@ -683,6 +749,7 @@ Validation Accuracy: {self.results[-1]['val_accuracy']:.3f}
         img {{ max-width: 100%; margin: 20px 0; border: 1px solid #e5e7eb; border-radius: 8px; }}
         .cat-features {{ background: #fee2e2; padding: 4px 8px; border-radius: 4px; }}
         .num-features {{ background: #dcfce7; padding: 4px 8px; border-radius: 4px; }}
+        .missing-info {{ background: #e0e7ff; padding: 10px; border-radius: 6px; margin: 10px 0; }}
     </style>
 </head>
 <body>
@@ -693,6 +760,7 @@ Validation Accuracy: {self.results[-1]['val_accuracy']:.3f}
             <h2>⚙️ Encoding Configuration</h2>
             <p><strong>Encoder Type:</strong> {self.encoder_type}</p>
             <p><strong>Available Encoders:</strong> {'CatBoostEncoder, ' if HAS_CATBOOST_ENCODER else ''}OrdinalEncoder</p>
+            <p><strong>Missing Value Handling:</strong> SimpleImputer (mean for numeric, most_frequent for categorical)</p>
             <p>Categorical features are automatically detected and encoded before model training.</p>
         </div>
 """
@@ -720,6 +788,10 @@ Validation Accuracy: {self.results[-1]['val_accuracy']:.3f}
                 <span class="cat-features">Categorical: {dataset_info['n_categorical']}</span> 
                 <span class="num-features">Numeric: {dataset_info['n_numeric']}</span>
             </p>
+            
+            <div class="missing-info">
+                <strong>📊 Data Quality Note:</strong> Missing values were automatically handled using SimpleImputer
+            </div>
 """
 
             for result in data["results"]:
@@ -802,6 +874,7 @@ Validation Accuracy: {self.results[-1]['val_accuracy']:.3f}
             <h3>🔑 Key Insights with Encoding</h3>
             <ul>
                 <li><strong>Categorical encoding is crucial</strong> - Datasets like Mushroom require proper encoding</li>
+                <li><strong>Missing values handled automatically</strong> - SimpleImputer ensures robust preprocessing</li>
                 <li><strong>CatBoostEncoder vs OrdinalEncoder</strong> - Target encoding can improve performance</li>
                 <li><strong>Feature scaling matters</strong> - Standardization applied after encoding</li>
                 <li><strong>Threshold methods still work</strong> - Unified API handles encoded features seamlessly</li>
@@ -813,7 +886,7 @@ Validation Accuracy: {self.results[-1]['val_accuracy']:.3f}
 """
 
         # Сохраняем отчет
-        report_path = self.output_dir / "experiment_report_with_encoding.html"
+        report_path = self.output_dir / "experiment_report.html"
         with open(report_path, "w", encoding="utf-8") as f:
             f.write(html_content)
 

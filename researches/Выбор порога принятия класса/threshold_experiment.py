@@ -1,933 +1,583 @@
 """
-Унифицированный эксперимент с автоматической обработкой категориальных признаков
-===============================================================================
+Модуль для проведения экспериментов по сравнению методов выбора порогов.
 
-Добавлена поддержка категориальных данных через различные энкодеры и обработка пропусков.
-
-Author: Dmatryus Detry
-License: Apache 2.0
+Включает загрузку датасетов, обучение моделей и оценку методов.
 """
 
-import warnings
-import time
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
-from scipy.stats import entropy
-from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import RandomForestClassifier
+from typing import Dict, List, Tuple, Any, Optional
+from dataclasses import dataclass, field
+import warnings
+from pathlib import Path
+import json
+import time
+from datetime import datetime
+
+# ML библиотеки
+from sklearn.model_selection import train_test_split, StratifiedKFold
+from sklearn.preprocessing import LabelEncoder
 from sklearn.impute import SimpleImputer
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+    log_loss,
+)
+from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import confusion_matrix
-from sklearn.model_selection import train_test_split
+from sklearn.neural_network import MLPClassifier
 from sklearn.naive_bayes import GaussianNB
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import LabelEncoder, OrdinalEncoder, StandardScaler
-from sklearn.svm import SVC
-from sklearn.tree import DecisionTreeClassifier
 
-from dmdslab.datasets import create_data_split
-from dmdslab.datasets.uci_dataset_manager import TaskType, UCIDatasetManager
+# CatBoost
+from catboost import CatBoostClassifier
+from category_encoders import CatBoostEncoder
 
-# Импортируем унифицированный модуль
-from threshold_analysis import (
-    create_selector,
-    get_available_methods,
-    select_confident_samples,
-    TaskType as ThresholdTaskType,
+# Внутренние модули
+from dmdslab.datasets.uci_dataset_manager import UCIDatasetManager, TaskType, ModelData
+from threshold_methods import (
+    BaseThresholdSelector,
+    ThresholdMethodFactory,
+    ThresholdResult,
 )
 
-warnings.filterwarnings("ignore")
 
-# Попробуем импортировать CatBoostEncoder
-try:
-    from category_encoders import CatBoostEncoder
+@dataclass
+class DatasetConfig:
+    """Конфигурация датасета для эксперимента."""
 
-    HAS_CATBOOST_ENCODER = True
-except ImportError:
-    print(
-        "Warning: CatBoostEncoder not available. Install with: pip install category_encoders"
-    )
-    HAS_CATBOOST_ENCODER = False
+    dataset_id: int
+    name: str
+    task_type: str
+    n_classes: int = 2
 
 
-class DataPreprocessor:
-    """Класс для автоматической предобработки данных с обработкой пропусков"""
+@dataclass
+class ModelConfig:
+    """Конфигурация модели для эксперимента."""
 
-    def __init__(
-        self,
-        encoder_type="auto",
-        missing_numeric="mean",
-        missing_categorical="most_frequent",
-    ):
-        """
-        Args:
-            encoder_type: 'catboost', 'ordinal', 'auto'
-            missing_numeric: Стратегия для числовых признаков ('mean', 'median', 'most_frequent', 'constant')
-            missing_categorical: Стратегия для категориальных признаков ('most_frequent', 'constant')
-        """
-        self.encoder_type = encoder_type
-        self.missing_numeric = missing_numeric
-        self.missing_categorical = missing_categorical
-        self.feature_encoder = None
-        self.target_encoder = None
-        self.numeric_features = []
-        self.categorical_features = []
-        self.fitted = False
-
-    def _detect_feature_types(self, X):
-        """Определение типов признаков"""
-        if isinstance(X, pd.DataFrame):
-            self.numeric_features = X.select_dtypes(
-                include=[np.number]
-            ).columns.tolist()
-            self.categorical_features = X.select_dtypes(
-                exclude=[np.number]
-            ).columns.tolist()
-        else:
-            # Для numpy arrays пытаемся определить по содержимому
-            self.numeric_features = []
-            self.categorical_features = []
-
-            for i in range(X.shape[1] if len(X.shape) > 1 else 1):
-                col = X[:, i] if len(X.shape) > 1 else X
-                try:
-                    col.astype(float)
-                    self.numeric_features.append(i)
-                except (ValueError, TypeError):
-                    self.categorical_features.append(i)
-
-    def fit_transform(self, X, y):
-        """Обучение и преобразование данных"""
-        # Преобразуем в DataFrame для удобства
-        if not isinstance(X, pd.DataFrame):
-            X = pd.DataFrame(X)
-
-        # Определяем типы признаков
-        self._detect_feature_types(X)
-
-        # Обрабатываем таргет
-        self.target_encoder = LabelEncoder()
-        y_encoded = self.target_encoder.fit_transform(y)
-
-        # Если нет категориальных признаков, обрабатываем только числовые
-        if not self.categorical_features:
-            # Pipeline для числовых признаков
-            numeric_pipeline = Pipeline(
-                [
-                    ("imputer", SimpleImputer(strategy=self.missing_numeric)),
-                    ("scaler", StandardScaler()),
-                ]
-            )
-
-            self.feature_encoder = numeric_pipeline
-            X_encoded = self.feature_encoder.fit_transform(X)
-            self.fitted = True
-            return X_encoded, y_encoded
-
-        # Выбираем энкодер
-        if self.encoder_type == "auto":
-            if HAS_CATBOOST_ENCODER and len(np.unique(y)) == 2:
-                # CatBoostEncoder хорош для бинарной классификации
-                encoder_type = "catboost"
-            else:
-                encoder_type = "ordinal"
-        else:
-            encoder_type = self.encoder_type
-
-        # Создаем препроцессор
-        transformers = []
-
-        # Для числовых признаков - imputation + стандартизация
-        if self.numeric_features:
-            numeric_pipeline = Pipeline(
-                [
-                    ("imputer", SimpleImputer(strategy=self.missing_numeric)),
-                    ("scaler", StandardScaler()),
-                ]
-            )
-            transformers.append(("num", numeric_pipeline, self.numeric_features))
-
-        # Для категориальных признаков - imputation + энкодинг
-        if self.categorical_features:
-            if encoder_type == "catboost" and HAS_CATBOOST_ENCODER:
-                # CatBoostEncoder требует особой обработки
-                # Сначала заполняем пропуски
-                cat_imputer = SimpleImputer(strategy=self.missing_categorical)
-                X_cat = X[self.categorical_features]
-                X_cat_imputed = pd.DataFrame(
-                    cat_imputer.fit_transform(X_cat),
-                    columns=self.categorical_features,
-                    index=X.index,
-                )
-
-                # Затем применяем CatBoostEncoder
-                encoder = CatBoostEncoder(
-                    cols=self.categorical_features, return_df=False
-                )
-                X_cat_encoded = encoder.fit_transform(X_cat_imputed, y_encoded)
-
-                # Собираем обратно
-                X_encoded = X.copy()
-                X_encoded[self.categorical_features] = X_cat_encoded
-
-                self.feature_encoder = encoder
-                self.cat_imputer = cat_imputer
-                self.fitted = True
-
-                # Обрабатываем числовые признаки
-                if self.numeric_features:
-                    numeric_pipeline = Pipeline(
-                        [
-                            ("imputer", SimpleImputer(strategy=self.missing_numeric)),
-                            ("scaler", StandardScaler()),
-                        ]
-                    )
-                    X_num = X_encoded[self.numeric_features]
-                    X_num_processed = numeric_pipeline.fit_transform(X_num)
-                    X_encoded[self.numeric_features] = X_num_processed
-                    self.numeric_pipeline = numeric_pipeline
-
-                return X_encoded.values, y_encoded
-            else:
-                # Используем OrdinalEncoder с imputation
-                categorical_pipeline = Pipeline(
-                    [
-                        ("imputer", SimpleImputer(strategy=self.missing_categorical)),
-                        (
-                            "encoder",
-                            OrdinalEncoder(
-                                handle_unknown="use_encoded_value", unknown_value=-1
-                            ),
-                        ),
-                    ]
-                )
-                transformers.append(
-                    ("cat", categorical_pipeline, self.categorical_features)
-                )
-
-        # Создаем и обучаем ColumnTransformer
-        self.feature_encoder = ColumnTransformer(
-            transformers=transformers, remainder="passthrough"
-        )
-
-        X_encoded = self.feature_encoder.fit_transform(X)
-        self.fitted = True
-
-        return X_encoded, y_encoded
-
-    def transform(self, X):
-        """Преобразование новых данных"""
-        if not self.fitted:
-            raise ValueError("Preprocessor not fitted yet")
-
-        if not isinstance(X, pd.DataFrame):
-            X = pd.DataFrame(X)
-
-        if not self.categorical_features and not self.numeric_features:
-            return X.values
-
-        if hasattr(self, "cat_imputer") and isinstance(
-            self.feature_encoder, CatBoostEncoder
-        ):
-            # Специальная обработка для CatBoostEncoder
-            X_encoded = X.copy()
-
-            # Обработка категориальных признаков
-            X_cat = X[self.categorical_features]
-            X_cat_imputed = pd.DataFrame(
-                self.cat_imputer.transform(X_cat),
-                columns=self.categorical_features,
-                index=X.index,
-            )
-            X_cat_encoded = self.feature_encoder.transform(X_cat_imputed)
-            X_encoded[self.categorical_features] = X_cat_encoded
-
-            # Обработка числовых признаков
-            if hasattr(self, "numeric_pipeline") and self.numeric_features:
-                X_num = X_encoded[self.numeric_features]
-                X_num_processed = self.numeric_pipeline.transform(X_num)
-                X_encoded[self.numeric_features] = X_num_processed
-
-            return X_encoded.values
-        else:
-            return self.feature_encoder.transform(X)
-
-    def inverse_transform_target(self, y):
-        """Обратное преобразование таргета"""
-        if self.target_encoder is not None:
-            return self.target_encoder.inverse_transform(y)
-        return y
+    name: str
+    model_class: Any
+    params: Dict[str, Any] = field(default_factory=dict)
 
 
-class UnifiedThresholdExperimentWithEncoding:
-    """Эксперимент с автоматической обработкой категориальных данных и пропусков"""
+@dataclass
+class ExperimentResult:
+    """Результат эксперимента для одной комбинации датасет-модель-метод."""
 
-    def __init__(self, output_dir: str = "experiments", encoder_type="auto"):
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(exist_ok=True)
-        self.manager = UCIDatasetManager()
-        self.results = []
-        self.encoder_type = encoder_type
+    dataset_name: str
+    model_name: str
+    threshold_method: str
+    threshold_value: float
+    n_selected: int
+    n_total: int
+    selection_rate: float
+    # Метрики на псевдо-размеченных данных
+    pseudo_accuracy: float
+    pseudo_f1: float
+    pseudo_precision: float
+    pseudo_recall: float
+    # Метрики модели
+    model_train_time: float
+    model_inference_time: float
+    # Дополнительная информация
+    additional_info: Dict[str, Any] = field(default_factory=dict)
 
-    def get_datasets(self) -> List[Dict]:
-        """Получение разнообразных датасетов"""
-        datasets_info = [
-            # Бинарные датасеты
-            {
-                "id": 73,
-                "name": "Mushroom",
-                "expected_type": "binary",
-            },  # Категориальные признаки!
-            {"id": 2, "name": "Adult", "expected_type": "binary"},  # Смешанные типы
-            {"id": 94, "name": "Spambase", "expected_type": "binary"},  # Числовые
-            {"id": 222, "name": "Bank Marketing", "expected_type": "binary"},
-            # Многоклассовые датасеты
-            {"id": 53, "name": "Iris", "expected_type": "multiclass"},  # Числовые
-            {"id": 80, "name": "Optical Recognition", "expected_type": "multiclass"},
-            {"id": 459, "name": "Avila", "expected_type": "multiclass"},
-        ]
 
-        # Фильтруем доступные
-        available = []
-        for ds_info in datasets_info:
-            try:
-                if self.manager.get_dataset_info(ds_info["id"]):
-                    available.append(ds_info)
-            except:
-                print(f"Dataset {ds_info['name']} (ID: {ds_info['id']}) not available")
+class ThresholdExperiment:
+    """Класс для проведения экспериментов по сравнению методов выбора порогов."""
 
-        return available[:5]  # Ограничиваем для демонстрации
+    def __init__(self, experiment_name: str = "threshold_comparison"):
+        self.experiment_name = experiment_name
+        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.results: List[ExperimentResult] = []
+        self.uci_manager = UCIDatasetManager()
 
-    def get_models(self) -> List[tuple]:
-        """Модели для экспериментов"""
+    def get_datasets(self) -> Dict[str, List[DatasetConfig]]:
+        """Получение датасетов для экспериментов."""
+        datasets = {
+            "binary": [
+                DatasetConfig(73, "Mushroom", "binary", 2),
+                DatasetConfig(2, "Adult", "binary", 2),
+                DatasetConfig(94, "Spambase", "binary", 2),
+                DatasetConfig(222, "Bank Marketing", "binary", 2),
+                DatasetConfig(350, "Credit Card Default", "binary", 2),
+                DatasetConfig(159, "MAGIC Gamma Telescope", "binary", 2),
+            ],
+            "multiclass": [
+                # Только действительно многоклассовые датасеты
+                DatasetConfig(224, "Gas Sensor Array Drift", "multiclass", 6),
+                DatasetConfig(459, "Avila", "multiclass", 12),
+                DatasetConfig(102, "Thyroid Disease", "multiclass", 3),
+            ],
+        }
+        return datasets
+
+    def get_models(self) -> List[ModelConfig]:
+        """Получение конфигураций моделей для экспериментов."""
         return [
-            ("Logistic Regression", LogisticRegression(max_iter=1000, random_state=42)),
-            (
-                "Random Forest",
-                RandomForestClassifier(n_estimators=100, random_state=42),
+            ModelConfig(
+                "CatBoost",
+                CatBoostClassifier,
+                {
+                    "iterations": 100,
+                    "learning_rate": 0.1,
+                    "depth": 6,
+                    "verbose": False,
+                    "random_state": 42,
+                },
             ),
-            ("Decision Tree", DecisionTreeClassifier(max_depth=10, random_state=42)),
+            ModelConfig(
+                "RandomForest",
+                RandomForestClassifier,
+                {
+                    "n_estimators": 100,
+                    "max_depth": 10,
+                    "random_state": 42,
+                    "n_jobs": -1,
+                },
+            ),
+            ModelConfig(
+                "ExtraTrees",
+                ExtraTreesClassifier,
+                {
+                    "n_estimators": 100,
+                    "max_depth": 10,
+                    "random_state": 42,
+                    "n_jobs": -1,
+                },
+            ),
+            ModelConfig(
+                "LogisticRegression",
+                LogisticRegression,
+                {"max_iter": 1000, "random_state": 42},
+            ),
+            ModelConfig(
+                "GaussianNB",
+                GaussianNB,
+                {},
+            ),
+            ModelConfig(
+                "MLP",
+                MLPClassifier,
+                {
+                    "hidden_layer_sizes": (100, 50),
+                    "max_iter": 500,
+                    "random_state": 42,
+                    "early_stopping": True,
+                },
+            ),
         ]
 
-    def get_threshold_methods(self) -> List[Dict[str, Any]]:
-        """Методы выбора порогов с параметрами"""
-        return [
-            # Универсальные методы
-            {"method": "max_prob", "params": {"threshold": 0.5}},
-            {"method": "max_prob", "params": {"threshold": 0.7}},
-            {"method": "percentile", "params": {"percentile": 80}},
-            {"method": "percentile", "params": {"percentile": 90}},
-            {"method": "entropy", "params": {}},
-            {"method": "margin", "params": {"min_margin": 0.1}},
-            {"method": "adaptive", "params": {"initial_threshold": 0.9}},
-            # Специфичные для бинарной классификации
-            {"method": "f1", "params": {}},
-            {"method": "youden", "params": {}},
-        ]
+    def prepare_data(
+        self, model_data: ModelData, task_type: str
+    ) -> Tuple[np.ndarray, np.ndarray, List[int], List[int]]:
+        """
+        Подготовка данных для эксперимента.
 
-    def run_experiment(self):
-        """Запуск эксперимента с предобработкой"""
+        Returns:
+            X: Признаки
+            y: Метки
+            categorical_features: Индексы категориальных признаков
+            numerical_features: Индексы численных признаков
+        """
+        X = model_data.features
+        y = model_data.target
+
+        # Преобразуем в numpy если нужно
+        if hasattr(X, "values"):
+            X = X.values
+        if hasattr(y, "values"):
+            y = y.values
+
+        # Создаем копию для безопасной обработки
+        X = X.copy()
+        y = y.copy()
+
+        # Определяем типы признаков более надежно
+        categorical_features = []
+        numerical_features = []
+
+        for i in range(X.shape[1]):
+            col = X[:, i]
+
+            # Проверяем, является ли колонка числовой
+            try:
+                # Попытка преобразовать в float
+                col_numeric = pd.to_numeric(col, errors="coerce")
+
+                # Если больше 90% значений успешно преобразовались в числа
+                if np.sum(~np.isnan(col_numeric)) / len(col) > 0.9:
+                    # Это числовой признак
+                    X[:, i] = col_numeric
+                    numerical_features.append(i)
+                else:
+                    # Это категориальный признак
+                    categorical_features.append(i)
+            except:
+                # Если не удалось преобразовать - категориальный
+                categorical_features.append(i)
+
+        # Label encoding для категориальных признаков
+        if categorical_features:
+            for idx in categorical_features:
+                le = LabelEncoder()
+                # Обрабатываем пропуски
+                mask = pd.isna(X[:, idx]) | (X[:, idx] == "") | (X[:, idx] == "nan")
+                X[~mask, idx] = le.fit_transform(X[~mask, idx])
+                X[mask, idx] = -1  # Специальное значение для пропусков
+
+        # Imputation для численных признаков
+        if numerical_features:
+            imputer = SimpleImputer(strategy="mean")
+            X[:, numerical_features] = imputer.fit_transform(X[:, numerical_features])
+
+        # Преобразуем все в float для единообразия
+        X = X.astype(np.float32)
+
+        # Label encoding для target если нужно
+        if y.dtype == object or y.dtype.kind in ["U", "S"]:
+            le = LabelEncoder()
+            y = le.fit_transform(y)
+
+        return X, y, categorical_features, numerical_features
+
+    def run_single_experiment(
+        self,
+        dataset_config: DatasetConfig,
+        model_config: ModelConfig,
+        threshold_methods: List[BaseThresholdSelector],
+    ) -> List[ExperimentResult]:
+        """Запуск эксперимента для одной комбинации датасет-модель."""
+        print(f"\n  Обработка: {dataset_config.name} + {model_config.name}")
+
+        try:
+            # Загружаем датасет
+            model_data = self.uci_manager.load_dataset(dataset_config.dataset_id)
+            X, y, cat_features, num_features = self.prepare_data(
+                model_data, dataset_config.task_type
+            )
+
+            # Разбиваем данные: train/val/test/unlabeled
+            X_temp, X_test, y_temp, y_test = train_test_split(
+                X, y, test_size=0.2, random_state=42, stratify=y
+            )
+
+            X_train, X_unlabeled, y_train, y_unlabeled = train_test_split(
+                X_temp, y_temp, test_size=0.6, random_state=42, stratify=y_temp
+            )
+
+            X_train_full, X_val, y_train_full, y_val = train_test_split(
+                X_train, y_train, test_size=0.2, random_state=42, stratify=y_train
+            )
+
+            print(
+                f"    Размеры: train={len(X_train_full)}, val={len(X_val)}, "
+                f"unlabeled={len(X_unlabeled)}, test={len(X_test)}"
+            )
+
+            # Кодирование категориальных признаков
+            if cat_features and model_config.name != "CatBoost":
+                encoder = CatBoostEncoder(cols=cat_features)
+                X_train_full = encoder.fit_transform(X_train_full, y_train_full)
+                X_val = encoder.transform(X_val)
+                X_unlabeled = encoder.transform(X_unlabeled)
+                X_test = encoder.transform(X_test)
+
+            # Обучаем модель
+            model = model_config.model_class(**model_config.params)
+
+            # Специальная обработка для CatBoost
+            if model_config.name == "CatBoost" and cat_features:
+                start_time = time.time()
+                model.fit(
+                    X_train_full,
+                    y_train_full,
+                    cat_features=cat_features,
+                    eval_set=(X_val, y_val),
+                    verbose=False,
+                )
+                train_time = time.time() - start_time
+            else:
+                start_time = time.time()
+                model.fit(X_train_full, y_train_full)
+                train_time = time.time() - start_time
+
+            # Получаем предсказания на неразмеченных данных
+            start_time = time.time()
+            if hasattr(model, "predict_proba"):
+                y_proba_unlabeled = model.predict_proba(X_unlabeled)
+            else:
+                # Для моделей без predict_proba используем predict
+                y_pred = model.predict(X_unlabeled)
+                n_classes = len(np.unique(y_train_full))
+                y_proba_unlabeled = np.zeros((len(y_pred), n_classes))
+                y_proba_unlabeled[np.arange(len(y_pred)), y_pred] = 1.0
+
+            inference_time = time.time() - start_time
+
+            results = []
+
+            # Тестируем каждый метод выбора порога
+            for method in threshold_methods:
+                try:
+                    # Для методов, требующих истинные метки, используем валидацию
+                    if method.name in [
+                        "Optimal F1",
+                        "Youden J Statistic",
+                        "Cost Sensitive",
+                    ]:
+                        y_proba_val = (
+                            model.predict_proba(X_val)
+                            if hasattr(model, "predict_proba")
+                            else None
+                        )
+                        if y_proba_val is None:
+                            continue
+                        # Получаем порог на валидации
+                        threshold_result_val = method.select_threshold(
+                            y_val, y_proba_val
+                        )
+
+                        # Применяем найденный порог к неразмеченным данным
+                        if (
+                            dataset_config.task_type == "binary"
+                            and y_proba_unlabeled.shape[1] == 2
+                        ):
+                            proba_positive = y_proba_unlabeled[:, 1]
+                        else:
+                            proba_positive = np.max(y_proba_unlabeled, axis=1)
+
+                        confident_mask = (
+                            proba_positive >= threshold_result_val.threshold
+                        )
+
+                        # Создаем результат с найденным порогом
+                        threshold_result = ThresholdResult(
+                            threshold=threshold_result_val.threshold,
+                            score=threshold_result_val.score,
+                            method_name=method.name,
+                            additional_info=threshold_result_val.additional_info,
+                            confident_mask=confident_mask,
+                        )
+                    else:
+                        threshold_result = method.select_threshold(
+                            None, y_proba_unlabeled
+                        )
+
+                    # Оцениваем качество псевдо-разметки
+                    confident_mask = threshold_result.confident_mask
+                    n_selected = np.sum(confident_mask)
+
+                    if n_selected > 0:
+                        # Сравниваем псевдо-метки с истинными
+                        if dataset_config.task_type == "binary":
+                            if y_proba_unlabeled.shape[1] == 2:
+                                pseudo_labels = (
+                                    y_proba_unlabeled[confident_mask, 1]
+                                    >= threshold_result.threshold
+                                ).astype(int)
+                            else:
+                                pseudo_labels = (
+                                    y_proba_unlabeled[confident_mask]
+                                    >= threshold_result.threshold
+                                ).astype(int)
+                        else:
+                            pseudo_labels = np.argmax(
+                                y_proba_unlabeled[confident_mask], axis=1
+                            )
+
+                        true_labels = y_unlabeled[confident_mask]
+
+                        # Вычисляем метрики
+                        pseudo_accuracy = accuracy_score(true_labels, pseudo_labels)
+                        pseudo_f1 = f1_score(
+                            true_labels,
+                            pseudo_labels,
+                            average=(
+                                "macro"
+                                if dataset_config.task_type == "multiclass"
+                                else "binary"
+                            ),
+                        )
+                        pseudo_precision = precision_score(
+                            true_labels,
+                            pseudo_labels,
+                            average=(
+                                "macro"
+                                if dataset_config.task_type == "multiclass"
+                                else "binary"
+                            ),
+                            zero_division=0,
+                        )
+                        pseudo_recall = recall_score(
+                            true_labels,
+                            pseudo_labels,
+                            average=(
+                                "macro"
+                                if dataset_config.task_type == "multiclass"
+                                else "binary"
+                            ),
+                            zero_division=0,
+                        )
+                    else:
+                        pseudo_accuracy = pseudo_f1 = pseudo_precision = (
+                            pseudo_recall
+                        ) = 0.0
+
+                    result = ExperimentResult(
+                        dataset_name=dataset_config.name,
+                        model_name=model_config.name,
+                        threshold_method=method.name,
+                        threshold_value=threshold_result.threshold,
+                        n_selected=n_selected,
+                        n_total=len(y_unlabeled),
+                        selection_rate=n_selected / len(y_unlabeled),
+                        pseudo_accuracy=pseudo_accuracy,
+                        pseudo_f1=pseudo_f1,
+                        pseudo_precision=pseudo_precision,
+                        pseudo_recall=pseudo_recall,
+                        model_train_time=train_time,
+                        model_inference_time=inference_time,
+                        additional_info=threshold_result.additional_info,
+                    )
+
+                    results.append(result)
+
+                except Exception as e:
+                    print(f"      Ошибка в методе {method.name}: {str(e)}")
+                    continue
+
+            return results
+
+        except Exception as e:
+            print(f"    Ошибка в эксперименте: {str(e)}")
+            return []
+
+    def run_experiments(self):
+        """Запуск всех экспериментов."""
+        print(f"Начинаем эксперимент: {self.experiment_name}")
+        print("=" * 80)
+
         datasets = self.get_datasets()
         models = self.get_models()
-        methods = self.get_threshold_methods()
+        methods = ThresholdMethodFactory.get_all_methods()
 
-        print(f"Starting experiment with {len(datasets)} datasets...")
-        print(f"Encoder type: {self.encoder_type}")
-        print(f"Methods to test: {len(methods)}")
-        print(f"Models to evaluate: {len(models)}")
-
-        for dataset_info in datasets:
-            print(f"\n{'='*60}")
-            print(
-                f"Processing: {dataset_info['name']} (expected: {dataset_info['expected_type']})"
-            )
-
-            try:
-                # Загружаем датасет
-                split = self.manager.load_dataset_split(
-                    dataset_info["id"],
-                    test_size=0.2,
-                    validation_size=0.2,
-                    random_state=42,
+        # Эксперименты для бинарной классификации
+        print("\n1. Эксперименты для бинарной классификации")
+        print("-" * 40)
+        for dataset_config in datasets["binary"]:
+            for model_config in models:
+                results = self.run_single_experiment(
+                    dataset_config,
+                    model_config,
+                    methods["binary"] + methods["universal"],
                 )
+                self.results.extend(results)
 
-                # Создаем препроцессор с обработкой пропусков
-                preprocessor = DataPreprocessor(encoder_type=self.encoder_type)
-
-                # Обучаем препроцессор и преобразуем данные
-                print(f"  Preprocessing data...")
-                X_train, y_train = preprocessor.fit_transform(
-                    split.train.features, split.train.target
+        # Эксперименты для многоклассовой классификации
+        print("\n2. Эксперименты для многоклассовой классификации")
+        print("-" * 40)
+        for dataset_config in datasets["multiclass"]:
+            for model_config in models:
+                results = self.run_single_experiment(
+                    dataset_config,
+                    model_config,
+                    methods["multiclass"] + methods["universal"],
                 )
-                X_val = preprocessor.transform(split.validation.features)
-                y_val = preprocessor.target_encoder.transform(split.validation.target)
-                X_test = preprocessor.transform(split.test.features)
-                y_test = preprocessor.target_encoder.transform(split.test.target)
+                self.results.extend(results)
 
-                # Информация о предобработке
-                print(
-                    f"  Feature types - Numeric: {len(preprocessor.numeric_features)}, "
-                    f"Categorical: {len(preprocessor.categorical_features)}"
-                )
+        print(f"\nВсего проведено экспериментов: {len(self.results)}")
 
-                # Определяем реальный тип задачи
-                n_classes = len(np.unique(y_train))
-                actual_type = "binary" if n_classes == 2 else "multiclass"
+    def save_results(self, output_dir: str = "results"):
+        """Сохранение результатов эксперимента."""
+        output_path = Path(output_dir) / self.experiment_name
+        output_path.mkdir(parents=True, exist_ok=True)
 
-                print(f"  Actual type: {actual_type}, Classes: {n_classes}")
-                print(
-                    f"  Samples - Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}"
-                )
-                print(f"  Features after encoding: {X_train.shape[1]}")
+        # Сохраняем как DataFrame
+        results_df = pd.DataFrame([vars(r) for r in self.results])
+        csv_path = output_path / f"results_{self.timestamp}.csv"
+        results_df.to_csv(csv_path, index=False)
+        print(f"\nРезультаты сохранены в: {csv_path}")
 
-                dataset_info["n_classes"] = n_classes
-                dataset_info["actual_type"] = actual_type
-                dataset_info["n_categorical"] = len(preprocessor.categorical_features)
-                dataset_info["n_numeric"] = len(preprocessor.numeric_features)
+        # Сохраняем сводную статистику
+        summary = self._generate_summary(results_df)
+        summary_path = output_path / f"summary_{self.timestamp}.json"
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
 
-                # Для каждой модели
-                for model_name, model in models:
-                    print(f"\n  Training {model_name}...")
+        return results_df
 
-                    # Обучаем модель
-                    model.fit(X_train, y_train)
+    def _generate_summary(self, results_df: pd.DataFrame) -> Dict[str, Any]:
+        """Генерация сводной статистики."""
+        summary = {
+            "experiment_name": self.experiment_name,
+            "timestamp": self.timestamp,
+            "total_experiments": len(results_df),
+            "datasets": results_df["dataset_name"].unique().tolist(),
+            "models": results_df["model_name"].unique().tolist(),
+            "methods": results_df["threshold_method"].unique().tolist(),
+        }
 
-                    # Получаем вероятности
-                    val_proba = model.predict_proba(X_val)
-                    test_proba = model.predict_proba(X_test)
-
-                    # Для бинарной классификации извлекаем вероятность положительного класса
-                    if actual_type == "binary":
-                        val_proba_for_methods = val_proba[:, 1]
-                        test_proba_for_methods = test_proba[:, 1]
-                    else:
-                        val_proba_for_methods = val_proba
-                        test_proba_for_methods = test_proba
-
-                    # Базовая точность модели
-                    val_pred = model.predict(X_val)
-                    val_accuracy = np.mean(val_pred == y_val)
-                    print(f"    Validation accuracy: {val_accuracy:.3f}")
-
-                    # Применяем все методы
-                    method_results = []
-
-                    for method_config in methods:
-                        method_name = method_config["method"]
-                        method_params = method_config["params"]
-
-                        try:
-                            # Применяем метод с автоматическим определением типа
-                            result = select_confident_samples(
-                                test_proba_for_methods,
-                                method=method_name,
-                                y_true=(
-                                    y_test if method_name in ["f1", "youden"] else None
-                                ),
-                                return_result=True,
-                                **method_params,
-                            )
-
-                            method_results.append(
-                                {
-                                    "method": result.method_name,
-                                    "result": result,
-                                    "execution_time": time.time(),
-                                }
-                            )
-
-                            print(
-                                f"    {result.method_name}: {result.selection_ratio:.1%} selected",
-                                end="",
-                            )
-                            if result.metrics:
-                                key_metric = (
-                                    "f1" if actual_type == "binary" else "weighted_f1"
-                                )
-                                if key_metric in result.metrics:
-                                    print(
-                                        f" ({key_metric}: {result.metrics[key_metric]:.3f})"
-                                    )
-                                else:
-                                    print()
-                            else:
-                                print()
-
-                        except Exception as e:
-                            print(f"    {method_name}: Error - {str(e)}")
-
-                    # Сохраняем результаты перед визуализацией
-                    experiment_result = {
-                        "dataset": dataset_info,
-                        "model": model_name,
-                        "val_accuracy": val_accuracy,
-                        "method_results": method_results,
-                        "preprocessing": {
-                            "encoder_type": self.encoder_type,
-                            "n_categorical": len(preprocessor.categorical_features),
-                            "n_numeric": len(preprocessor.numeric_features),
-                        },
-                    }
-                    self.results.append(experiment_result)
-
-                    # Визуализация результатов
-                    self._create_visualizations(
-                        val_proba_for_methods,
-                        test_proba_for_methods,
-                        y_val,
-                        y_test,
-                        method_results,
-                        dataset_info,
-                        model_name,
-                        val_accuracy,
-                    )
-
-            except Exception as e:
-                print(f"  Error processing dataset: {str(e)}")
-                import traceback
-
-                traceback.print_exc()
-
-        # Генерируем итоговый отчет
-        self._generate_report()
-        self._create_comparison_visualizations()
-
-    def _create_visualizations(
-        self,
-        val_proba,
-        test_proba,
-        y_val,
-        y_test,
-        method_results,
-        dataset_info,
-        model_name,
-        val_accuracy,
-    ):
-        """Создание визуализаций"""
-        task_type = dataset_info["actual_type"]
-
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-
-        # 1. Распределение вероятностей/уверенности
-        ax = axes[0, 0]
-        if task_type == "binary":
-            ax.hist(val_proba, bins=50, alpha=0.7, density=True, edgecolor="black")
-            ax.set_xlabel("P(y=1)")
-            ax.set_title("Probability Distribution (Binary)")
-
-            # Добавляем пороги
-            for res_info in method_results[:3]:  # Показываем первые 3 для читаемости
-                result = res_info["result"]
-                if isinstance(result.threshold, float):
-                    ax.axvline(
-                        result.threshold,
-                        linestyle="--",
-                        alpha=0.7,
-                        label=f"{result.method_name}: {result.threshold:.2f}",
-                    )
-        else:
-            max_proba = np.max(val_proba, axis=1)
-            ax.hist(max_proba, bins=50, alpha=0.7, density=True, edgecolor="black")
-            ax.set_xlabel("Max Probability")
-            ax.set_title("Max Probability Distribution (Multiclass)")
-
-        ax.legend(fontsize=8)
-
-        # 2. Метрики методов
-        ax = axes[0, 1]
-        method_names = []
-        selection_ratios = []
-        key_metrics = []
-
-        for res_info in method_results:
-            result = res_info["result"]
-            method_names.append(result.method_name.split("(")[0])
-            selection_ratios.append(result.selection_ratio * 100)
-
-            if result.metrics:
-                if task_type == "binary":
-                    key_metrics.append(result.metrics.get("f1", 0) * 100)
-                else:
-                    key_metrics.append(result.metrics.get("weighted_f1", 0) * 100)
-            else:
-                key_metrics.append(0)
-
-        # Показываем только топ методы для читаемости
-        if len(method_names) > 7:
-            # Сортируем по метрике и берем топ-7
-            sorted_indices = np.argsort(key_metrics)[-7:]
-            method_names = [method_names[i] for i in sorted_indices]
-            selection_ratios = [selection_ratios[i] for i in sorted_indices]
-            key_metrics = [key_metrics[i] for i in sorted_indices]
-
-        x = np.arange(len(method_names))
-        width = 0.35
-
-        bars1 = ax.bar(
-            x - width / 2, selection_ratios, width, label="Selection %", alpha=0.7
-        )
-        bars2 = ax.bar(x + width / 2, key_metrics, width, label="F1 Score %", alpha=0.7)
-
-        ax.set_xlabel("Method")
-        ax.set_ylabel("Percentage")
-        ax.set_title("Method Performance Comparison")
-        ax.set_xticks(x)
-        ax.set_xticklabels(method_names, rotation=45, ha="right")
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-
-        # 3. Информация о данных
-        ax = axes[1, 0]
-        ax.axis("off")
-        info_text = f"""Dataset Information:
-        
-Name: {dataset_info['name']}
-Type: {dataset_info['actual_type']}
-Classes: {dataset_info['n_classes']}
-Model: {model_name}
-
-Feature Types:
-- Categorical: {dataset_info['n_categorical']}
-- Numeric: {dataset_info['n_numeric']}
-
-Validation Accuracy: {val_accuracy:.3f}
-        """
-        ax.text(
-            0.1,
-            0.5,
-            info_text,
-            transform=ax.transAxes,
-            fontsize=12,
-            verticalalignment="center",
-            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
-        )
-
-        # 4. Confusion matrix для лучшего метода
-        ax = axes[1, 1]
-        if method_results:
-            best_result = max(
-                (r for r in method_results if r["result"].metrics),
-                key=lambda r: r["result"].metrics.get("accuracy", 0),
-                default=None,
-            )
-
-            if best_result and len(best_result["result"].selected_indices) > 0:
-                result = best_result["result"]
-                cm = confusion_matrix(
-                    y_test[result.selected_indices], result.predicted_labels
-                )
-                sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
-                ax.set_title(f"Confusion Matrix - {result.method_name}")
-                ax.set_xlabel("Predicted")
-                ax.set_ylabel("True")
-
-        plt.suptitle(
-            f"{dataset_info['name']} - {model_name} ({task_type})", fontsize=16
-        )
-        plt.tight_layout()
-
-        save_path = (
-            self.output_dir
-            / f"{dataset_info['name']}_{model_name}_analysis.png".replace(" ", "_")
-        )
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
-        plt.close()
-
-    def _create_comparison_visualizations(self):
-        """Создание сравнительных визуализаций"""
-        if not self.results:
-            return
-
-        # Анализ влияния категориальных признаков
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-
-        # Собираем данные
-        categorical_impact = []
-        for result in self.results:
-            n_cat = result["preprocessing"]["n_categorical"]
-            best_score = max(
-                (
-                    r["result"].metrics.get(
-                        (
-                            "f1"
-                            if result["dataset"]["actual_type"] == "binary"
-                            else "weighted_f1"
-                        ),
-                        0,
-                    )
-                    for r in result["method_results"]
-                    if r["result"].metrics
-                ),
-                default=0,
-            )
-            categorical_impact.append(
-                {
-                    "n_categorical": n_cat,
-                    "best_score": best_score,
-                    "dataset": result["dataset"]["name"],
-                    "model": result["model"],
-                }
-            )
-
-        df_impact = pd.DataFrame(categorical_impact)
-
-        # График 1: Влияние количества категориальных признаков
-        for model in df_impact["model"].unique():
-            model_data = df_impact[df_impact["model"] == model]
-            ax1.scatter(
-                model_data["n_categorical"],
-                model_data["best_score"],
-                label=model,
-                s=100,
-                alpha=0.7,
-            )
-
-        ax1.set_xlabel("Number of Categorical Features")
-        ax1.set_ylabel("Best F1 Score")
-        ax1.set_title("Impact of Categorical Features on Performance")
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-
-        # График 2: Производительность по датасетам
-        datasets_perf = (
-            df_impact.groupby("dataset")["best_score"]
+        # Лучшие методы по метрикам
+        best_by_accuracy = (
+            results_df.groupby("threshold_method")["pseudo_accuracy"]
             .mean()
             .sort_values(ascending=False)
+            .head(5)
+            .to_dict()
         )
-        bars = ax2.bar(range(len(datasets_perf)), datasets_perf.values)
-        ax2.set_xticks(range(len(datasets_perf)))
-        ax2.set_xticklabels(datasets_perf.index, rotation=45, ha="right")
-        ax2.set_ylabel("Average Best F1 Score")
-        ax2.set_title("Dataset Performance (with encoding)")
 
-        # Цветовая кодировка по количеству категориальных признаков
-        dataset_cat_features = df_impact.groupby("dataset")["n_categorical"].first()
-        for i, (dataset, n_cat) in enumerate(dataset_cat_features.items()):
-            if n_cat == 0:
-                bars[i].set_color("green")
-            elif n_cat < 10:
-                bars[i].set_color("orange")
-            else:
-                bars[i].set_color("red")
+        best_by_f1 = (
+            results_df.groupby("threshold_method")["pseudo_f1"]
+            .mean()
+            .sort_values(ascending=False)
+            .head(5)
+            .to_dict()
+        )
 
-        # Легенда
-        from matplotlib.patches import Patch
+        best_by_selection = (
+            results_df.groupby("threshold_method")["selection_rate"]
+            .mean()
+            .sort_values(ascending=False)
+            .head(5)
+            .to_dict()
+        )
 
-        legend_elements = [
-            Patch(facecolor="green", label="No categorical"),
-            Patch(facecolor="orange", label="1-9 categorical"),
-            Patch(facecolor="red", label="10+ categorical"),
-        ]
-        ax2.legend(handles=legend_elements, loc="upper right")
+        summary["best_methods"] = {
+            "by_accuracy": best_by_accuracy,
+            "by_f1": best_by_f1,
+            "by_selection_rate": best_by_selection,
+        }
 
-        plt.tight_layout()
-        plt.savefig(self.output_dir / "categorical_features_impact.png", dpi=300)
-        plt.close()
+        # Статистика по моделям - исправляем формат для JSON
+        model_stats_raw = results_df.groupby("model_name").agg(
+            {
+                "pseudo_accuracy": ["mean", "std"],
+                "pseudo_f1": ["mean", "std"],
+                "model_train_time": "mean",
+            }
+        )
 
-    def _generate_report(self):
-        """Генерация HTML отчета"""
-        html_content = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Threshold Selection with Categorical Encoding</title>
-    <style>
-        body {{ font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }}
-        .container {{ max-width: 1400px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }}
-        h1 {{ color: #2563eb; text-align: center; }}
-        .encoding-info {{ background: #fef3c7; padding: 15px; border-radius: 8px; margin: 20px 0; }}
-        .dataset-section {{ margin: 30px 0; padding: 20px; background: #f9fafb; border-radius: 8px; }}
-        table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
-        th {{ background: #3b82f6; color: white; padding: 12px; text-align: left; }}
-        td {{ padding: 10px; border-bottom: 1px solid #e5e7eb; }}
-        img {{ max-width: 100%; margin: 20px 0; border: 1px solid #e5e7eb; border-radius: 8px; }}
-        .cat-features {{ background: #fee2e2; padding: 4px 8px; border-radius: 4px; }}
-        .num-features {{ background: #dcfce7; padding: 4px 8px; border-radius: 4px; }}
-        .missing-info {{ background: #e0e7ff; padding: 10px; border-radius: 6px; margin: 10px 0; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🔬 Threshold Selection Experiment with Categorical Encoding</h1>
-        
-        <div class="encoding-info">
-            <h2>⚙️ Encoding Configuration</h2>
-            <p><strong>Encoder Type:</strong> {self.encoder_type}</p>
-            <p><strong>Available Encoders:</strong> {'CatBoostEncoder, ' if HAS_CATBOOST_ENCODER else ''}OrdinalEncoder</p>
-            <p><strong>Missing Value Handling:</strong> SimpleImputer (mean for numeric, most_frequent for categorical)</p>
-            <p>Categorical features are automatically detected and encoded before model training.</p>
-        </div>
-"""
+        # Преобразуем MultiIndex в обычный словарь
+        model_stats = {}
+        for model in model_stats_raw.index:
+            model_stats[model] = {
+                "accuracy_mean": float(
+                    model_stats_raw.loc[model, ("pseudo_accuracy", "mean")]
+                ),
+                "accuracy_std": float(
+                    model_stats_raw.loc[model, ("pseudo_accuracy", "std")]
+                ),
+                "f1_mean": float(model_stats_raw.loc[model, ("pseudo_f1", "mean")]),
+                "f1_std": float(model_stats_raw.loc[model, ("pseudo_f1", "std")]),
+                "train_time_mean": float(
+                    model_stats_raw.loc[model, ("model_train_time", "mean")]
+                ),
+            }
 
-        # Результаты по датасетам
-        datasets_grouped = {}
-        for result in self.results:
-            dataset_name = result["dataset"]["name"]
-            if dataset_name not in datasets_grouped:
-                datasets_grouped[dataset_name] = {
-                    "info": result["dataset"],
-                    "results": [],
-                }
-            datasets_grouped[dataset_name]["results"].append(result)
+        summary["model_statistics"] = model_stats
 
-        for dataset_name, data in datasets_grouped.items():
-            dataset_info = data["info"]
-
-            html_content += f"""
-        <div class="dataset-section">
-            <h2>{dataset_name}</h2>
-            <p>
-                <strong>Type:</strong> {dataset_info['actual_type']} ({dataset_info['n_classes']} classes) | 
-                <strong>Features:</strong> 
-                <span class="cat-features">Categorical: {dataset_info['n_categorical']}</span> 
-                <span class="num-features">Numeric: {dataset_info['n_numeric']}</span>
-            </p>
-            
-            <div class="missing-info">
-                <strong>📊 Data Quality Note:</strong> Missing values were automatically handled using SimpleImputer
-            </div>
-"""
-
-            for result in data["results"]:
-                model_name = result["model"]
-                html_content += f"""
-            <h3>Model: {model_name}</h3>
-            <p><strong>Validation Accuracy:</strong> {result['val_accuracy']:.3f}</p>
-            
-            <img src="{dataset_name}_{model_name}_analysis.png" alt="Analysis">
-            
-            <table>
-                <tr>
-                    <th>Method</th>
-                    <th>Selection %</th>
-                    <th>Accuracy</th>
-                    <th>F1 Score</th>
-                </tr>
-"""
-
-                # Сортируем методы по F1 score
-                sorted_methods = sorted(
-                    result["method_results"],
-                    key=lambda x: (
-                        x["result"].metrics.get(
-                            (
-                                "f1"
-                                if dataset_info["actual_type"] == "binary"
-                                else "weighted_f1"
-                            ),
-                            0,
-                        )
-                        if x["result"].metrics
-                        else 0
-                    ),
-                    reverse=True,
-                )
-
-                for method_result in sorted_methods[:10]:  # Топ-10
-                    res = method_result["result"]
-
-                    accuracy = res.metrics.get("accuracy", "-") if res.metrics else "-"
-                    f1 = (
-                        res.metrics.get(
-                            (
-                                "f1"
-                                if dataset_info["actual_type"] == "binary"
-                                else "weighted_f1"
-                            ),
-                            "-",
-                        )
-                        if res.metrics
-                        else "-"
-                    )
-
-                    html_content += f"""
-                <tr>
-                    <td>{res.method_name}</td>
-                    <td>{res.selection_ratio*100:.1f}%</td>
-                    <td>{accuracy if isinstance(accuracy, str) else f'{accuracy:.3f}'}</td>
-                    <td>{f1 if isinstance(f1, str) else f'{f1:.3f}'}</td>
-                </tr>
-"""
-
-                html_content += """
-            </table>
-"""
-
-            html_content += """
-        </div>
-"""
-
-        # Добавляем анализ категориальных признаков
-        html_content += """
-        <div style="margin-top: 40px;">
-            <h2>📊 Impact of Categorical Features</h2>
-            <img src="categorical_features_impact.png" alt="Categorical Features Impact">
-        </div>
-        
-        <div style="margin-top: 40px; padding: 20px; background: #f3f4f6; border-radius: 8px;">
-            <h3>🔑 Key Insights with Encoding</h3>
-            <ul>
-                <li><strong>Categorical encoding is crucial</strong> - Datasets like Mushroom require proper encoding</li>
-                <li><strong>Missing values handled automatically</strong> - SimpleImputer ensures robust preprocessing</li>
-                <li><strong>CatBoostEncoder vs OrdinalEncoder</strong> - Target encoding can improve performance</li>
-                <li><strong>Feature scaling matters</strong> - Standardization applied after encoding</li>
-                <li><strong>Threshold methods still work</strong> - Unified API handles encoded features seamlessly</li>
-            </ul>
-        </div>
-    </div>
-</body>
-</html>
-"""
-
-        # Сохраняем отчет
-        report_path = self.output_dir / "experiment_report.html"
-        with open(report_path, "w", encoding="utf-8") as f:
-            f.write(html_content)
-
-        print(f"\nReport saved to: {report_path}")
-
-
-def main():
-    """Запуск эксперимента с обработкой категориальных признаков"""
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Run threshold experiment with categorical encoding"
-    )
-    parser.add_argument(
-        "--encoder",
-        choices=["auto", "catboost", "ordinal"],
-        default="auto",
-        help="Encoder type for categorical features",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default="unified_experiments",
-        help="Output directory for results",
-    )
-
-    args = parser.parse_args()
-
-    # Проверяем доступность CatBoostEncoder
-    if args.encoder == "catboost" and not HAS_CATBOOST_ENCODER:
-        print("CatBoostEncoder requested but not available. Installing...")
-        import subprocess
-
-        subprocess.check_call(["pip", "install", "category_encoders"])
-        print("Please restart the script.")
-        return
-
-    experiment = UnifiedThresholdExperimentWithEncoding(
-        output_dir=args.output_dir, encoder_type=args.encoder
-    )
-    experiment.run_experiment()
-
-
-if __name__ == "__main__":
-    main()
+        return summary

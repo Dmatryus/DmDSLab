@@ -5,7 +5,6 @@
     python run_threshold_experiment.py
 """
 
-import sys
 import warnings
 from pathlib import Path
 from datetime import datetime

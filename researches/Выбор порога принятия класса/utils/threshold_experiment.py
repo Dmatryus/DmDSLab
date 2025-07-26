@@ -99,9 +99,7 @@ class ThresholdExperiment:
         """Получение датасетов для экспериментов."""
         datasets = {
             "binary": [
-                DatasetConfig(73, "Mushroom", "binary", 2),
                 DatasetConfig(2, "Adult", "binary", 2),
-                DatasetConfig(94, "Spambase", "binary", 2),
                 DatasetConfig(222, "Bank Marketing", "binary", 2),
                 DatasetConfig(350, "Credit Card Default", "binary", 2),
                 DatasetConfig(159, "MAGIC Gamma Telescope", "binary", 2),

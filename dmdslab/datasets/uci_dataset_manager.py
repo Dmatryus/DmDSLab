@@ -16,6 +16,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
+from dmdslab import DataInfo, DataSplit, ModelData, create_data_split, create_kfold_data
+
 try:
     from ucimlrepo import fetch_ucirepo
 except ImportError:
@@ -24,13 +26,6 @@ except ImportError:
     ) from None
 
 # Import our data structures
-from .ml_data_container import (
-    DataInfo,
-    DataSplit,
-    ModelData,
-    create_data_split,
-    create_kfold_data,
-)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -254,9 +249,7 @@ class UCIDatasetManager:
             cursor = conn.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
             row = cursor.fetchone()
 
-        if row:
-            return DatasetInfo.from_dict(dict(row))
-        return None
+        return DatasetInfo.from_dict(dict(row)) if row else None
 
     def filter_datasets(
         self,
@@ -358,43 +351,46 @@ class UCIDatasetManager:
         logger.info(f"Loading dataset: {dataset_info.name} (ID: {dataset_id})")
 
         try:
-            # Fetch dataset from UCI repository
-            dataset = fetch_ucirepo(id=dataset_id)
-            X = dataset.data.features
-            y = dataset.data.targets
-
-            # Convert target to 1D array if necessary
-            if y is not None and len(y.shape) > 1 and y.shape[1] == 1:
-                y = y.ravel()
-
-            # Try to get feature names from the fetched dataset
-            feature_names = dataset_info.feature_names
-            if feature_names is None:
-                if (
-                    hasattr(dataset.data, "feature_names")
-                    and dataset.data.feature_names is not None
-                ):
-                    try:
-                        feature_names = list(dataset.data.feature_names)
-                    except (TypeError, AttributeError):
-                        feature_names = None
-                elif hasattr(X, "columns"):
-                    try:
-                        feature_names = list(X.columns)
-                    except (TypeError, AttributeError):
-                        feature_names = None
-
-            # Create ModelData with metadata
-            return ModelData(
-                features=X,
-                target=y,
-                feature_names=feature_names,
-                info=dataset_info.to_data_info(),
-            )
-
+            return self._load_by_id(dataset_id, dataset_info)
         except Exception as e:
             logger.error(f"Failed to load dataset {dataset_id}: {str(e)}")
             raise
+
+    def _load_by_id(self, dataset_id, dataset_info):
+        # Fetch dataset from UCI repository
+        dataset = fetch_ucirepo(id=dataset_id)
+        X = dataset.data.features
+        y = dataset.data.targets
+
+        # Convert target to 1D array if necessary
+        if y is not None and len(y.shape) > 1 and y.shape[1] == 1:
+            y = y.values.ravel()
+
+        # Try to get feature names from the fetched dataset
+        feature_names = dataset_info.feature_names
+        if (
+            hasattr(dataset.data, "feature_names")
+            and dataset.data.feature_names is not None
+        ):
+            if feature_names is None:
+                try:
+                    feature_names = list(dataset.data.feature_names)
+                except (TypeError, AttributeError):
+                    feature_names = None
+        elif hasattr(X, "columns"):
+            if feature_names is None:
+                try:
+                    feature_names = list(X.columns)
+                except (TypeError, AttributeError):
+                    feature_names = None
+
+        # Create ModelData with metadata
+        return ModelData(
+            features=X,
+            target=y,
+            feature_names=feature_names,
+            info=dataset_info.to_data_info(),
+        )
 
     def load_dataset_split(
         self,

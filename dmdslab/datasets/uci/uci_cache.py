@@ -103,6 +103,7 @@ def safe_pickle_load(file_path: Path) -> Any:
                     cache_path=str(file_path),
                     cache_status=CacheStatus.CORRUPTED,
                 )
+            return pickle.load(f)
 
     except pickle.UnpicklingError as e:
         raise CacheError(

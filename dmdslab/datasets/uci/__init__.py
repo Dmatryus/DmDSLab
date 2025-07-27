@@ -37,7 +37,8 @@ UCI Dataset Loader для DmDSLab.
 """
 
 # Версия модуля
-__version__ = "1.0.0"
+__version__ = "2.0.0"
+
 
 # Импорт основных классов
 from dmdslab.datasets.uci.uci_manager import UCIDatasetManager
@@ -83,39 +84,6 @@ from dmdslab.datasets.uci.uci_utils import (
     get_popular_datasets,
     format_cache_size,
 )
-
-# Определяем публичный API модуля
-__all__ = [
-    # Основные классы
-    "UCIDatasetManager",
-    "CacheManager",
-    "DatasetInfo",
-    "MetadataExtractor",
-    # Типы
-    "TaskType",
-    "Domain",
-    "CacheStatus",
-    "LogLevel",
-    "DatasetID",
-    # Исключения
-    "UCIDatasetError",
-    "CacheError",
-    "DatasetNotFoundError",
-    "NetworkError",
-    "DataFormatError",
-    "ValidationError",
-    "ConfigurationError",
-    # Утилиты
-    "setup_logger",
-    "validate_dataset_id",
-    "format_dataset_info",
-    "print_dataset_summary",
-    "get_popular_datasets",
-    "format_cache_size",
-    # Функции кеша
-    "safe_pickle_dump",
-    "safe_pickle_load",
-]
 
 
 # Удобные алиасы для обратной совместимости
@@ -280,6 +248,48 @@ def _get_module_info() -> dict:
         "total_popular": len(POPULAR_DATASETS),
     }
 
+
+__all__ = [
+    # Основные классы
+    "UCIDatasetManager",
+    "CacheManager",
+    "DatasetInfo",
+    "MetadataExtractor",
+    # Типы
+    "TaskType",
+    "Domain",
+    "CacheStatus",
+    "LogLevel",
+    "DatasetID",
+    # Исключения
+    "UCIDatasetError",
+    "CacheError",
+    "DatasetNotFoundError",
+    "NetworkError",
+    "DataFormatError",
+    "ValidationError",
+    "ConfigurationError",
+    # Утилиты
+    "setup_logger",
+    "validate_dataset_id",
+    "format_dataset_info",
+    "print_dataset_summary",
+    "get_popular_datasets",
+    "format_cache_size",
+    # Функции кеша
+    "safe_pickle_dump",
+    "safe_pickle_load",
+    # Функции быстрой загрузки (добавлено)
+    "load_dataset",
+    "load_datasets",
+    "load_by_name",
+    "clear_cache",
+    "get_cache_info",
+    # Константы
+    "POPULAR_DATASETS",
+    # Алиасы
+    "UCILoader",
+]
 
 # При импорте модуля можно вывести краткую информацию
 if __name__ == "__main__":

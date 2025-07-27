@@ -480,8 +480,8 @@ class CacheManager:
         """
         return sum(
             cache_info.get("size_bytes", 0)
-            for cache_info in self.index.values()
-            if "_" not in str(cache_info.get("dataset_id", "_"))
+            for str_id, cache_info in self.index.items()
+            if not str_id.startswith("_")  # Исключаем метаданные
         )
 
     def clear_all(self) -> None:
@@ -489,8 +489,8 @@ class CacheManager:
         self.logger.warning("Начата полная очистка кеша")
 
         # Удаляем все файлы кеша
-        for cache_info in self.index.values():
-            if "_" not in str(cache_info.get("dataset_id", "_")):
+        for str_id, cache_info in list(self.index.items()):
+            if not str_id.startswith("_"):  # Исключаем метаданные
                 cache_file = self.cache_dir / cache_info.get("filename", "")
                 if cache_file.exists():
                     try:
@@ -498,8 +498,8 @@ class CacheManager:
                     except Exception as e:
                         self.logger.error(f"Ошибка удаления {cache_file}: {e}")
 
-        # Очищаем индекс
-        self.index = {}
+        # Очищаем индекс (сохраняем только метаданные)
+        self.index = {k: v for k, v in self.index.items() if k.startswith("_")}
         self.save_index()
 
         self.logger.info("Кеш полностью очищен")
@@ -531,6 +531,7 @@ class CacheManager:
         """
         if dataset_id is not None:
             return self._get_dataset_info(dataset_id)
+
         # Общая информация о кеше
         total_size = self.calculate_cache_size()
         dataset_count = len(self.get_cached_datasets())
@@ -623,6 +624,7 @@ class CacheManager:
                 f"превышает лимит ({format_cache_size(self.max_cache_size)})"
             )
 
+            # Собираем только датасеты (исключая метаданные)
             cached_datasets = [
                 {
                     "id": str_id,
@@ -751,7 +753,12 @@ class CacheManager:
 
     def _calc_stat(self, stats, datasets):
         # Средний размер
-        stats["average_dataset_size"] = stats["total_size_bytes"] / len(datasets)
+        stats["average_dataset_size"] = (
+            stats["total_size_bytes"] / len(datasets) if datasets else 0
+        )
+
+        if not datasets:
+            return
 
         # Сортировка по размеру
         datasets_by_size = sorted(datasets, key=lambda x: x["size"])
@@ -796,7 +803,7 @@ class CacheManager:
         datasets = []
 
         for str_id, cache_info in self.index.items():
-            if str_id.startswith("_"):
+            if str_id.startswith("_"):  # Исключаем метаданные
                 continue
 
             dataset_id = cache_info.get("dataset_id", str_id)
@@ -819,6 +826,7 @@ class CacheManager:
 
         if datasets:
             self._calc_stat(stats, datasets)
+
         # Форматирование размеров
         stats["total_size"] = format_cache_size(stats["total_size_bytes"])
         stats["average_dataset_size_formatted"] = format_cache_size(
@@ -842,8 +850,8 @@ class CacheManager:
                 zipf.write(self.index_path, "cache_index.json")
 
                 # Добавляем все файлы датасетов
-                for cache_info in self.index.values():
-                    if "_" not in str(cache_info.get("dataset_id", "_")):
+                for str_id, cache_info in self.index.items():
+                    if not str_id.startswith("_"):  # Исключаем метаданные
                         cache_file = self.cache_dir / cache_info.get("filename", "")
                         if cache_file.exists():
                             zipf.write(cache_file, cache_file.name)
@@ -890,7 +898,7 @@ class CacheManager:
 
                         # Копируем файлы и обновляем индекс
                         for str_id, cache_info in imported_index.items():
-                            if str_id.startswith("_"):
+                            if str_id.startswith("_"):  # Пропускаем метаданные
                                 continue
 
                             filename = cache_info.get("filename", "")

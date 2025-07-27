@@ -153,9 +153,9 @@ class UCIDatasetManager:
         # Загружаем или создаем индекс
         self._load_cache_index()
 
-        self.logger.debug(
-            f"Кеш инициализирован. Записей в индексе: {len(self.cache_index)}"
-        )
+        # Подсчитываем только датасеты, исключая метаданные
+        dataset_count = sum(1 for k in self.cache_index.keys() if not k.startswith("_"))
+        self.logger.debug(f"Кеш инициализирован. Записей в индексе: {dataset_count}")
 
     def _load_cache_index(self) -> None:
         """Загрузка индекса кеша."""
@@ -788,11 +788,17 @@ class UCIDatasetManager:
         if not self.use_cache:
             return {"cache_enabled": False, "message": "Кеширование отключено"}
 
-        dataset_count = len(self.cache_index)
+        # Подсчитываем только датасеты, исключая метаданные
+        dataset_count = sum(1 for k in self.cache_index.keys() if not k.startswith("_"))
 
+        # Считаем общий размер только для датасетов
         total_size = sum(
-            cache_info.get("size_bytes", 0) for cache_info in self.cache_index.values()
+            cache_info.get("size_bytes", 0)
+            for dataset_id, cache_info in self.cache_index.items()
+            if not dataset_id.startswith("_")
         )
+
+        # Собираем информацию только по датасетам
         datasets_info = [
             {
                 "dataset_id": dataset_id,
@@ -803,7 +809,9 @@ class UCIDatasetManager:
                 ),
             }
             for dataset_id, cache_info in self.cache_index.items()
+            if not dataset_id.startswith("_")  # Исключаем метаданные
         ]
+
         # Сортируем по времени кеширования
         datasets_info.sort(key=lambda x: x.get("cached_at", ""), reverse=True)
 

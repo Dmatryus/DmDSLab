@@ -18,7 +18,7 @@ warnings.filterwarnings("ignore")
 
 # Предполагаем, что DmDSLab установлен
 try:
-    from DmDSLab import UCIDatasetManager
+    from dmdslab.datasets.uci_dataset_manager import UCIDatasetManager
 
     DMDSLAB_AVAILABLE = True
 except ImportError:

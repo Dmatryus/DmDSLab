@@ -5,6 +5,8 @@
 включая определение типов задач, категориальных признаков и статистики.
 """
 
+
+import contextlib
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple, Union
@@ -12,7 +14,7 @@ import numpy as np
 import pandas as pd
 from collections import Counter
 
-from .types import (
+from dmdslab.datasets.uci.uci_types import (
     TaskType,
     Domain,
     DatasetID,
@@ -24,7 +26,7 @@ from .types import (
     NUMERIC_DTYPES,
     CATEGORICAL_DTYPES,
 )
-from .exceptions import ValidationError, DataFormatError
+from dmdslab.datasets.uci.uci_exceptions import ValidationError, DataFormatError
 
 
 @dataclass
@@ -85,9 +87,7 @@ class DatasetInfo:
         name = metadata.get("name", f"Dataset_{dataset_id}")
 
         # Описание
-        description = metadata.get("abstract", "")
-        if not description:
-            description = metadata.get("description", "")
+        description = metadata.get("abstract", "") or metadata.get("description", "")
 
         # Размерность
         if features is not None:
@@ -100,14 +100,13 @@ class DatasetInfo:
 
         # Проверка пропущенных значений
         has_missing = False
-        if features is not None:
-            if isinstance(features, pd.DataFrame):
-                has_missing = features.isnull().any().any()
-            else:
-                has_missing = np.isnan(features).any()
-        else:
+        if features is None:
             has_missing = metadata.get("has_missing_values", False)
 
+        elif isinstance(features, pd.DataFrame):
+            has_missing = features.isnull().any().any()
+        else:
+            has_missing = np.isnan(features).any()
         # Определение типа задачи
         task_type_str = metadata.get("task", "Unknown")
         try:
@@ -303,9 +302,11 @@ class MetadataExtractor:
         categorical_indices = []
 
         if isinstance(features, pd.DataFrame):
-            for i, col in enumerate(features.columns):
-                if self._is_categorical_column(features[col]):
-                    categorical_indices.append(i)
+            categorical_indices.extend(
+                i
+                for i, col in enumerate(features.columns)
+                if self._is_categorical_column(features[col])
+            )
         else:
             # Для numpy arrays
             n_features = features.shape[1] if features.ndim > 1 else 1
@@ -326,9 +327,6 @@ class MetadataExtractor:
         Returns:
             True если категориальный
         """
-        # Если уже категориальный тип
-        if pd.api.types.is_categorical_dtype(series):
-            return True
 
         # Если объектный тип
         if pd.api.types.is_object_dtype(series):
@@ -388,10 +386,8 @@ class MetadataExtractor:
             if n_unique <= self.max_unique_for_categorical:
                 return True
 
-            if n_unique / n_total <= self.categorical_threshold:
-                # Проверяем целочисленность
-                if np.all(clean_array == clean_array.astype(int)):
-                    return True
+            if n_unique / n_total <= self.categorical_threshold and np.all(clean_array == clean_array.astype(int)):
+                return True
 
         return False
 
@@ -407,30 +403,30 @@ class MetadataExtractor:
         Returns:
             Словарь со статистикой
         """
-        stats = {}
-
-        # Статистика по признакам
-        if isinstance(features, pd.DataFrame):
-            stats["features"] = {
-                "shape": features.shape,
-                "dtypes": features.dtypes.value_counts().to_dict(),
-                "missing_values": features.isnull().sum().to_dict(),
-                "numeric_features": features.select_dtypes(
-                    include=[np.number]
-                ).columns.tolist(),
-                "categorical_features": features.select_dtypes(
-                    exclude=[np.number]
-                ).columns.tolist(),
-            }
-        else:
-            stats["features"] = {
-                "shape": features.shape,
-                "dtype": str(features.dtype),
-                "missing_values": int(np.isnan(features).sum()),
-                "min": float(np.nanmin(features)),
-                "max": float(np.nanmax(features)),
-                "mean": float(np.nanmean(features)),
-            }
+        stats = {
+            "features": (
+                {
+                    "shape": features.shape,
+                    "dtypes": features.dtypes.value_counts().to_dict(),
+                    "missing_values": features.isnull().sum().to_dict(),
+                    "numeric_features": features.select_dtypes(
+                        include=[np.number]
+                    ).columns.tolist(),
+                    "categorical_features": features.select_dtypes(
+                        exclude=[np.number]
+                    ).columns.tolist(),
+                }
+                if isinstance(features, pd.DataFrame)
+                else {
+                    "shape": features.shape,
+                    "dtype": str(features.dtype),
+                    "missing_values": int(np.isnan(features).sum()),
+                    "min": float(np.nanmin(features)),
+                    "max": float(np.nanmax(features)),
+                    "mean": float(np.nanmean(features)),
+                }
+            )
+        }
 
         # Статистика по целевой переменной
         if target is not None:
@@ -480,11 +476,8 @@ class MetadataExtractor:
         """
         # Сначала проверяем метаданные
         if metadata and "task" in metadata:
-            try:
+            with contextlib.suppress(ValueError):
                 return TaskType.from_string(metadata["task"])
-            except ValueError:
-                pass
-
         # Если нет целевой переменной - кластеризация
         if target is None:
             return TaskType.CLUSTERING
@@ -511,9 +504,8 @@ class MetadataExtractor:
                 return TaskType.CLASSIFICATION
 
             # Проверяем, являются ли значения целыми
-            if np.all(unique_values == unique_values.astype(int)):
-                if n_unique <= 50:  # Расширенный порог для целочисленных меток
-                    return TaskType.CLASSIFICATION
+            if np.all(unique_values == unique_values.astype(int)) and n_unique <= 50:
+                return TaskType.CLASSIFICATION
 
             # По умолчанию - регрессия для числовых данных
             if np.issubdtype(target.dtype, np.number):

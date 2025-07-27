@@ -69,11 +69,9 @@ class Domain(Enum):
             ValueError: Если значение не является допустимым доменом
         """
         value_lower = value.lower().strip()
-        for domain in cls:
-            if domain.value == value_lower:
-                return domain
-        # По умолчанию OTHER, если неизвестно
-        return cls.OTHER
+        return next(
+            (domain for domain in cls if domain.value == value_lower), cls.OTHER
+        )
     
     def __str__(self) -> str:
         return self.value

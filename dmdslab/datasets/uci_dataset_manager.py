@@ -26,7 +26,7 @@ except ImportError:
     ) from None
 
 # Import our data structures
-from ml_data_container import (
+from dmdslab.datasets import (
     DataInfo,
     DataSplit,
     ModelData,
@@ -498,10 +498,6 @@ class UCIDatasetManager:
             dataset = fetch_ucirepo(id=dataset_id)
             X = dataset.data.features
             y = dataset.data.targets
-
-            # Convert target to 1D array if necessary
-            if y is not None and len(y.shape) > 1 and y.shape[1] == 1:
-                y = y.ravel()
 
             # If dataset_info is None, create it from fetched data
             if not dataset_info:

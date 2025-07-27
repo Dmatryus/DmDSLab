@@ -1,81 +1,143 @@
 """
-DmDSLab: Data Science Laboratory Toolkit
+Модуль datasets для DmDSLab.
 
-Библиотека инструментов для автоматизации рутинных задач в Data Science проектах.
+Предоставляет функциональность для работы с различными датасетами,
+включая загрузку из UCI репозитория и управление данными.
 
-Основные модули:
-- datasets: Работа с датасетами и контейнеры данных
+Основные компоненты:
+    - ModelData: Контейнер для хранения данных ML моделей
+    - UCIDatasetManager: Загрузчик датасетов из UCI репозитория
+
+Подмодули:
+    - ml_data_container: Основной контейнер данных ModelData
+    - uci: Загрузчик датасетов UCI Machine Learning Repository
 """
 
-__version__ = "1.0.1"
-__author__ = "Dmatryus Detry"
-__email__ = "dmatryus.sqrt49@yandex.ru"
-__license__ = "Apache-2.0"
+# Импорт основного контейнера данных
+from dmdslab.datasets.ml_data_container import ModelData
 
-# Импорт основных компонентов для удобства использования
-from .datasets import (
-    DataInfo,
-    DataSplit,
-    ModelData,
-    create_data_split,
-    create_kfold_data,
+# Импорт UCI загрузчика
+from dmdslab.datasets.uci import (
+    UCIDatasetManager,
+    load_dataset as load_uci_dataset,
+    load_datasets as load_uci_datasets,
+    load_by_name as load_uci_by_name,
+    clear_cache as clear_uci_cache,
+    get_cache_info as get_uci_cache_info,
+    POPULAR_DATASETS as UCI_POPULAR_DATASETS,
 )
 
-# Условный импорт UCI компонентов (требует ucimlrepo)
-try:
-    from .datasets.uci_dataset_manager import (
-        DatasetInfo,
-        Domain,
-        TaskType,
-        UCIDatasetManager,
-        print_dataset_summary,
-    )
+# Реэкспорт основных классов для удобства
+from dmdslab.datasets.uci import (
+    DatasetInfo,
+    CacheManager,
+    TaskType,
+    Domain,
+)
 
-    _has_uci = True
-except ImportError:
-    _has_uci = False
+# Версия модуля datasets
+__version__ = "1.0.0"
 
-    # Создаем placeholder для документации
-    class _UCINotAvailable:
-        def __init__(self, *args, **kwargs):
-            raise ImportError(
-                "UCI functionality requires ucimlrepo package. "
-                "Install it with: pip install DmDSLab[uci]"
-            )
-
-    UCIDatasetManager = _UCINotAvailable
-    DatasetInfo = _UCINotAvailable
-    TaskType = None
-    Domain = None
-    print_dataset_summary = _UCINotAvailable
-
+# Публичный API
 __all__ = [
-    # Версия и метаданные
-    "__version__",
-    "__author__",
-    "__email__",
-    "__license__",
-    # Основные контейнеры данных
+    # Основные классы
     "ModelData",
-    "DataSplit",
-    "DataInfo",
-    # Функции создания разбиений
-    "create_data_split",
-    "create_kfold_data",
-    # UCI компоненты (если доступны)
     "UCIDatasetManager",
+    # Функции быстрой загрузки
+    "load_uci_dataset",
+    "load_uci_datasets",
+    "load_uci_by_name",
+    # Управление кешем
+    "clear_uci_cache",
+    "get_uci_cache_info",
+    # Дополнительные классы
     "DatasetInfo",
+    "CacheManager",
     "TaskType",
     "Domain",
-    "print_dataset_summary",
+    # Константы
+    "UCI_POPULAR_DATASETS",
 ]
 
 
-def get_version():
-    """Получить версию библиотеки."""
-    return __version__
+# Удобные функции-обертки на уровне модуля datasets
+def quick_load_iris():
+    """Быстрая загрузка датасета Iris.
+
+    Returns:
+        ModelData: Датасет Iris
+
+    Example:
+        >>> from dmdslab.datasets import quick_load_iris
+        >>> iris = quick_load_iris()
+    """
+    return load_uci_dataset(53)
 
 
-def has_uci_support():
-    """Проверить доступность UCI функциональности."""
-    return _has_uci
+def quick_load_wine():
+    """Быстрая загрузка датасета Wine.
+
+    Returns:
+        ModelData: Датасет Wine
+
+    Example:
+        >>> from dmdslab.datasets import quick_load_wine
+        >>> wine = quick_load_wine()
+    """
+    return load_uci_dataset(19)
+
+
+def quick_load_breast_cancer():
+    """Быстрая загрузка датасета Breast Cancer Wisconsin.
+
+    Returns:
+        ModelData: Датасет Breast Cancer
+
+    Example:
+        >>> from dmdslab.datasets import quick_load_breast_cancer
+        >>> bc = quick_load_breast_cancer()
+    """
+    return load_uci_dataset(17)
+
+
+# Словарь быстрых загрузчиков
+QUICK_LOADERS = {
+    "iris": quick_load_iris,
+    "wine": quick_load_wine,
+    "breast_cancer": quick_load_breast_cancer,
+}
+
+
+def list_available_loaders():
+    """Список доступных быстрых загрузчиков.
+
+    Returns:
+        dict: Словарь с информацией о загрузчиках
+    """
+    return {
+        "quick_loaders": list(QUICK_LOADERS.keys()),
+        "uci_popular": list(UCI_POPULAR_DATASETS.keys()),
+        "total_quick": len(QUICK_LOADERS),
+        "total_uci_popular": len(UCI_POPULAR_DATASETS),
+    }
+
+
+def get_dataset_info():
+    """Получение общей информации о модуле datasets.
+
+    Returns:
+        dict: Информация о модуле
+    """
+    return {
+        "version": __version__,
+        "submodules": ["ml_data_container", "uci"],
+        "features": [
+            "UCI dataset loading",
+            "Automatic caching",
+            "Categorical feature detection",
+            "Progress bars",
+            "ModelData integration",
+        ],
+        "quick_loaders": len(QUICK_LOADERS),
+        "popular_uci_datasets": len(UCI_POPULAR_DATASETS),
+    }

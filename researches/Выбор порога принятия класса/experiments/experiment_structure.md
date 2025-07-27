@@ -468,3 +468,151 @@ experiment_config:
 - **Визуализация**: matplotlib, seaborn, plotly
 - **Отчеты**: Jinja2, HTML/CSS
 - **Утилиты**: tqdm, joblib, pickle
+
+## Схема подготовки данных
+
+```mermaid
+graph TB
+    subgraph "Источники данных"
+        UCI[UCI ML Repository]
+        SK[Scikit-learn datasets]
+        SYN[Синтетические данные]
+    end
+    
+    subgraph "Загрузчики"
+        DM[DmDSLab UCIDatasetManager]
+        DL[UCIDirectLoader]
+        
+        UCI --> DL
+        SK --> DL
+        UCI -.->|если доступен| DM
+    end
+    
+    subgraph "Датасеты"
+        subgraph "Бинарная классификация"
+            BC[Breast Cancer<br/>569 samples, 30 features]
+            HD[Heart Disease<br/>303 samples, 13 features]
+            BM[Bank Marketing<br/>4119 samples, 20 features]
+            AI[Adult Income<br/>32561 samples, 14 features]
+            CD[Credit Default<br/>30000 samples, 23 features]
+        end
+        
+        subgraph "Мультиклассовая классификация"
+            IR[Iris<br/>150 samples, 4 features, 3 classes]
+            WQ[Wine Quality<br/>4898 samples, 11 features, 7 classes]
+            CT[Cover Type<br/>samples, features, 7 classes]
+            LR[Letter Recognition<br/>20000 samples, 16 features, 26 classes]
+            SAT[Satellite<br/>4435 samples, 36 features, 6 classes]
+        end
+    end
+    
+    DL --> BC
+    DL --> HD
+    DL --> BM
+    DL --> AI
+    DL --> CD
+    DL --> IR
+    DL --> WQ
+    DL --> CT
+    DL --> LR
+    DL --> SAT
+    
+    DM -.-> BC
+    DM -.-> HD
+    DM -.-> BM
+    
+    SYN -.->|fallback| BC
+    SYN -.->|fallback| HD
+    SYN -.->|fallback| BM
+    
+    subgraph "Предобработка"
+        subgraph "Обработка признаков (X)"
+            IMP_X[SimpleImputer<br/>Заполнение пропусков<br/>в признаках]
+            CBE[CatBoostEncoder<br/>Кодирование категориальных<br/>признаков]
+        end
+        
+        subgraph "Обработка меток (y)"
+            LE[LabelEncoder<br/>Преобразование текстовых<br/>меток в числа]
+        end
+        
+        BC --> IMP_X
+        HD --> IMP_X
+        BM --> IMP_X
+        AI --> IMP_X
+        CD --> IMP_X
+        IR --> IMP_X
+        WQ --> IMP_X
+        CT --> IMP_X
+        LR --> IMP_X
+        SAT --> IMP_X
+        
+        BC --> LE
+        HD --> LE
+        BM --> LE
+        AI --> LE
+        CD --> LE
+        IR --> LE
+        WQ --> LE
+        CT --> LE
+        LR --> LE
+        SAT --> LE
+        
+        IMP_X --> CBE
+    end
+    
+    subgraph "Разбиение данных"
+        SPLIT[train_test_split<br/>60% train, 20% val, 20% test]
+        SEMI[Полуконтролируемое разбиение<br/>20% labeled, 80% unlabeled]
+        
+        CBE --> SPLIT
+        LE --> SPLIT
+        SPLIT --> SEMI
+    end
+    
+    subgraph "Выходные данные"
+        TL[Train Labeled<br/>~20% от train]
+        TU[Train Unlabeled<br/>~80% от train]
+        VAL[Validation<br/>20% от всех данных]
+        TEST[Test<br/>20% от всех данных]
+        
+        SEMI --> TL
+        SEMI --> TU
+        SPLIT --> VAL
+        SPLIT --> TEST
+    end
+    
+    subgraph "Сохранение результатов"
+        PKL[prepared_datasets.pkl<br/>Полные данные]
+        JSON[dataset_summary.json<br/>Сводная информация]
+        YAML[experiment_config.yaml<br/>Конфигурация]
+        PNG[data_splits_visualization.png<br/>Визуализация]
+        
+        TL --> PKL
+        TU --> PKL
+        VAL --> PKL
+        TEST --> PKL
+        
+        PKL --> JSON
+        PKL --> YAML
+        PKL --> PNG
+    end
+    
+    style UCI fill:#e1f5fe
+    style SK fill:#e1f5fe
+    style DM fill:#fff3e0
+    style DL fill:#fff3e0
+    style BC fill:#ffcdd2
+    style HD fill:#ffcdd2
+    style BM fill:#ffcdd2
+    style AI fill:#ffcdd2
+    style CD fill:#ffcdd2
+    style IR fill:#c5cae9
+    style WQ fill:#c5cae9
+    style CT fill:#c5cae9
+    style LR fill:#c5cae9
+    style SAT fill:#c5cae9
+    style PKL fill:#c8e6c9
+    style JSON fill:#c8e6c9
+    style YAML fill:#c8e6c9
+    style PNG fill:#c8e6c9
+```

@@ -1,471 +1,749 @@
+#!/usr/bin/env python3
 """
-Initialize UCI Database Script
+UCI Database Initialization Script (File-based)
 
-This script initializes the UCI dataset database with predefined datasets
-suitable for PU learning research. Run this script once to create and populate
-the database that will be stored in the repository.
+This script manages UCI dataset metadata through JSON files instead of hardcoded data.
+It provides a flexible system for adding, updating, and organizing dataset metadata.
+
+Directory structure:
+    datasets_metadata/
+    ├── predefined/          # Manually curated datasets
+    │   ├── mushroom_73.json
+    │   ├── adult_2.json
+    │   └── ...
+    ├── discovered/          # Auto-discovered datasets
+    │   └── dataset_XXX.json
+    ├── categories.json      # Dataset categories/collections
+    └── templates/           # Templates for new datasets
+        └── dataset_template.json
 
 Usage:
+    # Initialize database from metadata files
     python initialize_uci_database.py
-
-The database will be created at: data/uci_datasets.db
+    
+    # Process unknown datasets and generate metadata files
+    python initialize_uci_database.py --process-unknown
+    
+    # Generate metadata file for specific dataset
+    python initialize_uci_database.py --generate-metadata 186
+    
+    # Validate all metadata files
+    python initialize_uci_database.py --validate
+    
+    # Show statistics
+    python initialize_uci_database.py --stats
 
 Author: DmDSLab Team
-License: MIT
+License: Apache 2.0
 """
 
+import argparse
+import json
+import logging
 import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-from dmdslab.datasets.uci_dataset_manager import (
-    DatasetInfo,
-    Domain,
-    TaskType,
-    UCIDatasetManager,
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
 )
+logger = logging.getLogger(__name__)
 
-
-def initialize_database():
-    """Initialize the UCI dataset database with predefined datasets."""
-
-    print("UCI Dataset Database Initialization")
-    print("=" * 50)
-
-    # Create manager
-    manager = UCIDatasetManager()
-
-    # Check if database already has data
-    stats = manager.get_statistics()
-    if stats["total_datasets"] > 0:
-        response = input(
-            f"\nDatabase already contains {stats['total_datasets']} datasets. "
-            "Do you want to clear and reinitialize? (y/N): "
-        )
-        if response.lower() != "y":
-            print("Initialization cancelled.")
-            return
-        else:
-            count = manager.delete_all_datasets()
-            print(f"Cleared {count} existing datasets.")
-
-    print("\nInitializing database with predefined datasets...")
-
-    # Define all datasets for PU learning research
-    datasets = [
-        # Balanced datasets
-        DatasetInfo(
-            id=73,
-            name="Mushroom",
-            url="https://archive.ics.uci.edu/dataset/73/mushroom",
-            n_instances=8124,
-            n_features=22,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.BIOLOGY,
-            class_balance={"edible": 0.52, "poisonous": 0.48},
-            description="Classification of mushrooms as edible or poisonous",
-            is_imbalanced=False,
-        ),
-        DatasetInfo(
-            id=2,
-            name="Adult",
-            url="https://archive.ics.uci.edu/dataset/2/adult",
-            n_instances=48842,
-            n_features=14,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.SOCIAL,
-            class_balance={"<=50K": 0.76, ">50K": 0.24},
-            description="Predict whether income exceeds $50K/yr",
-            is_imbalanced=True,
-            imbalance_ratio=3.17,
-        ),
-        DatasetInfo(
-            id=94,
-            name="Spambase",
-            url="https://archive.ics.uci.edu/dataset/94/spambase",
-            n_instances=4601,
-            n_features=57,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.CYBERSECURITY,
-            class_balance={"non-spam": 0.60, "spam": 0.40},
-            description="Email spam classification",
-            is_imbalanced=False,
-        ),
-        # Moderately imbalanced datasets
-        DatasetInfo(
-            id=522,
-            name="South German Credit",
-            url="https://archive.ics.uci.edu/dataset/522/south+german+credit",
-            n_instances=1000,
-            n_features=21,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.FINANCE,
-            class_balance={"good": 0.70, "bad": 0.30},
-            description="Credit risk assessment",
-            is_imbalanced=True,
-            imbalance_ratio=2.33,
-        ),
-        DatasetInfo(
-            id=144,
-            name="German Credit (Statlog)",
-            url="https://archive.ics.uci.edu/dataset/144/statlog+german+credit+data",
-            n_instances=1000,
-            n_features=20,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.FINANCE,
-            class_balance={"good": 0.70, "bad": 0.30},
-            description="Binary credit risk classification",
-            is_imbalanced=True,
-            imbalance_ratio=2.33,
-        ),
-        DatasetInfo(
-            id=563,
-            name="Iranian Churn",
-            url="https://archive.ics.uci.edu/dataset/563/iranian+churn+dataset",
-            n_instances=3150,
-            n_features=13,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.TELECOMMUNICATIONS,
-            class_balance={"no_churn": 0.775, "churn": 0.225},
-            description="Customer churn prediction",
-            is_imbalanced=True,
-            imbalance_ratio=3.44,
-        ),
-        DatasetInfo(
-            id=350,
-            name="Default of Credit Card Clients",
-            url="https://archive.ics.uci.edu/dataset/350/default+of+credit+card+clients",
-            n_instances=30000,
-            n_features=23,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.FINANCE,
-            class_balance={"no_default": 0.7788, "default": 0.2212},
-            description="Credit card default prediction",
-            is_imbalanced=True,
-            imbalance_ratio=3.52,
-        ),
-        DatasetInfo(
-            id=159,
-            name="MAGIC Gamma Telescope",
-            url="https://archive.ics.uci.edu/dataset/159/magic+gamma+telescope",
-            n_instances=19020,
-            n_features=10,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.PHYSICS,
-            class_balance={"background": 0.65, "signal": 0.35},
-            description="Distinguish gamma rays from hadronic showers",
-            is_imbalanced=True,
-            imbalance_ratio=1.86,
-        ),
-        # Highly imbalanced datasets
-        DatasetInfo(
-            id=222,
-            name="Bank Marketing",
-            url="https://archive.ics.uci.edu/dataset/222/bank+marketing",
-            n_instances=45211,
-            n_features=16,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.FINANCE,
-            class_balance={"no": 0.887, "yes": 0.113},
-            description="Bank term deposit subscription prediction",
-            is_imbalanced=True,
-            imbalance_ratio=7.85,
-        ),
-        DatasetInfo(
-            id=179,
-            name="SECOM",
-            url="https://archive.ics.uci.edu/dataset/179/secom",
-            n_instances=1567,
-            n_features=591,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.MANUFACTURING,
-            class_balance={"pass": 0.934, "fail": 0.066},
-            description="Semiconductor manufacturing quality control",
-            is_imbalanced=True,
-            imbalance_ratio=14.15,
-            has_missing_values=True,
-        ),
-        DatasetInfo(
-            id=572,
-            name="Taiwanese Bankruptcy Prediction",
-            url="https://archive.ics.uci.edu/dataset/572/taiwanese+bankruptcy+prediction",
-            n_instances=6819,
-            n_features=95,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.FINANCE,
-            class_balance={"no_bankrupt": 0.968, "bankrupt": 0.032},
-            description="Company bankruptcy prediction",
-            is_imbalanced=True,
-            imbalance_ratio=30.25,
-        ),
-        DatasetInfo(
-            id=365,
-            name="Polish Companies Bankruptcy",
-            url="https://archive.ics.uci.edu/dataset/365/polish+companies+bankruptcy+data",
-            n_instances=10503,
-            n_features=65,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.FINANCE,
-            class_balance={"no_bankrupt": 0.96, "bankrupt": 0.04},
-            description="Bankruptcy prediction 1-5 years ahead",
-            is_imbalanced=True,
-            imbalance_ratio=24.0,
-        ),
-        DatasetInfo(
-            id=372,
-            name="HTRU2",
-            url="https://archive.ics.uci.edu/dataset/372/htru2",
-            n_instances=17898,
-            n_features=8,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.ASTRONOMY,
-            class_balance={"no_pulsar": 0.91, "pulsar": 0.09},
-            description="Pulsar star classification",
-            is_imbalanced=True,
-            imbalance_ratio=10.11,
-        ),
-        DatasetInfo(
-            id=296,
-            name="Diabetes 130-US Hospitals",
-            url="https://archive.ics.uci.edu/dataset/296/diabetes+130-us+hospitals+for+years+1999-2008",
-            n_instances=101766,
-            n_features=47,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.MEDICINE,
-            class_balance={"no_readmission": 0.89, "readmission": 0.11},
-            description="Early hospital readmission prediction",
-            is_imbalanced=True,
-            imbalance_ratio=8.09,
-            has_missing_values=True,
-        ),
-        # Additional diverse datasets
-        DatasetInfo(
-            id=171,
-            name="Madelon",
-            url="https://archive.ics.uci.edu/dataset/171/madelon",
-            n_instances=2600,
-            n_features=500,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.ARTIFICIAL,
-            class_balance={"class_0": 0.50, "class_1": 0.50},
-            description="Artificial dataset for feature selection",
-            is_imbalanced=False,
-        ),
-        DatasetInfo(
-            id=327,
-            name="Phishing Websites",
-            url="https://archive.ics.uci.edu/dataset/327/phishing+websites",
-            n_instances=11055,
-            n_features=30,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.CYBERSECURITY,
-            class_balance={"legitimate": 0.45, "phishing": 0.55},
-            description="Phishing website detection",
-            is_imbalanced=False,
-        ),
-        DatasetInfo(
-            id=229,
-            name="Skin Segmentation",
-            url="https://archive.ics.uci.edu/dataset/229/skin+segmentation",
-            n_instances=245057,
-            n_features=3,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.COMPUTER_VISION,
-            class_balance={"non_skin": 0.79, "skin": 0.21},
-            description="Skin/non-skin pixel classification",
-            is_imbalanced=True,
-            imbalance_ratio=3.76,
-        ),
-        DatasetInfo(
-            id=264,
-            name="EEG Eye State",
-            url="https://archive.ics.uci.edu/dataset/264/eeg+eye+state",
-            n_instances=14980,
-            n_features=14,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.NEUROSCIENCE,
-            class_balance={"closed": 0.55, "open": 0.45},
-            description="Eye state detection from EEG signals",
-            is_imbalanced=False,
-        ),
-        DatasetInfo(
-            id=468,
-            name="Online Shoppers Purchasing Intention",
-            url="https://archive.ics.uci.edu/dataset/468/online+shoppers+purchasing+intention+dataset",
-            n_instances=12330,
-            n_features=17,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.ECOMMERCE,
-            class_balance={"no_revenue": 0.845, "revenue": 0.155},
-            description="Purchase intention prediction",
-            is_imbalanced=True,
-            imbalance_ratio=5.45,
-        ),
-        DatasetInfo(
-            id=357,
-            name="Occupancy Detection",
-            url="https://archive.ics.uci.edu/dataset/357/occupancy+detection",
-            n_instances=20560,
-            n_features=5,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.SMART_BUILDINGS,
-            class_balance={"not_occupied": 0.79, "occupied": 0.21},
-            description="Room occupancy detection from sensor data",
-            is_imbalanced=True,
-            imbalance_ratio=3.76,
-        ),
-        DatasetInfo(
-            id=199,
-            name="MiniBooNE Particle Identification",
-            url="https://archive.ics.uci.edu/dataset/199/miniboone+particle+identification",
-            n_instances=130065,
-            n_features=50,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.PHYSICS,
-            class_balance={"background": 0.72, "signal": 0.28},
-            description="Neutrino particle identification",
-            is_imbalanced=True,
-            imbalance_ratio=2.57,
-        ),
-        DatasetInfo(
-            id=224,
-            name="Gas Sensor Array Drift",
-            url="https://archive.ics.uci.edu/dataset/224/gas+sensor+array+drift+dataset",
-            n_instances=13910,
-            n_features=128,
-            task_type=TaskType.MULTICLASS_CLASSIFICATION,
-            domain=Domain.CHEMISTRY,
-            description="Chemical gas classification with sensor drift",
-            has_missing_values=False,
-        ),
-        DatasetInfo(
-            id=601,
-            name="AI4I 2020 Predictive Maintenance",
-            url="https://archive.ics.uci.edu/dataset/601/ai4i+2020+predictive+maintenance+dataset",
-            n_instances=10000,
-            n_features=14,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.MANUFACTURING,
-            class_balance={"no_failure": 0.966, "failure": 0.034},
-            description="Industrial equipment failure prediction",
-            is_imbalanced=True,
-            imbalance_ratio=28.41,
-        ),
-        DatasetInfo(
-            id=471,
-            name="Electrical Grid Stability",
-            url="https://archive.ics.uci.edu/dataset/471/electrical+grid+stability+simulated+data",
-            n_instances=10000,
-            n_features=12,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.ENERGY,
-            class_balance={"stable": 0.63, "unstable": 0.37},
-            description="Power grid stability prediction",
-            is_imbalanced=True,
-            imbalance_ratio=1.70,
-        ),
-        DatasetInfo(
-            id=459,
-            name="Avila",
-            url="https://archive.ics.uci.edu/dataset/459/avila",
-            n_instances=20867,
-            n_features=10,
-            task_type=TaskType.MULTICLASS_CLASSIFICATION,
-            domain=Domain.DOCUMENT_ANALYSIS,
-            description="Medieval manuscript writer identification",
-        ),
-        DatasetInfo(
-            id=507,
-            name="Swarm Behaviour",
-            url="https://archive.ics.uci.edu/dataset/507/swarm+behaviour",
-            n_instances=24017,
-            n_features=2400,
-            task_type=TaskType.MULTICLASS_CLASSIFICATION,
-            domain=Domain.ROBOTICS,
-            description="Robot swarm behavior classification",
-        ),
-        DatasetInfo(
-            id=464,
-            name="Superconductivty",
-            url="https://archive.ics.uci.edu/dataset/464/superconductivty+data",
-            n_instances=21263,
-            n_features=81,
-            task_type=TaskType.REGRESSION,
-            domain=Domain.MATERIALS,
-            description="Superconducting material property prediction",
-        ),
-        DatasetInfo(
-            id=102,
-            name="Thyroid Disease",
-            url="https://archive.ics.uci.edu/dataset/102/thyroid+disease",
-            n_instances=9172,
-            n_features=30,
-            task_type=TaskType.MULTICLASS_CLASSIFICATION,
-            domain=Domain.MEDICINE,
-            description="Thyroid disease diagnosis",
-            has_missing_values=True,
-        ),
-        DatasetInfo(
-            id=379,
-            name="Website Phishing",
-            url="https://archive.ics.uci.edu/dataset/379/website+phishing",
-            n_instances=1353,
-            n_features=9,
-            task_type=TaskType.MULTICLASS_CLASSIFICATION,
-            domain=Domain.CYBERSECURITY,
-            description="Phishing website detection (3 classes)",
-        ),
-        DatasetInfo(
-            id=280,
-            name="Higgs",
-            url="https://archive.ics.uci.edu/dataset/280/higgs",
-            n_instances=11000000,
-            n_features=28,
-            task_type=TaskType.BINARY_CLASSIFICATION,
-            domain=Domain.PHYSICS,
-            class_balance={"background": 0.53, "signal": 0.47},
-            description="Higgs boson process classification",
-            is_imbalanced=False,
-        ),
-    ]
-
-    # Add all datasets to the database
-    success_count = 0
-    for i, dataset in enumerate(datasets, 1):
-        try:
-            manager.add_dataset(dataset)
-            success_count += 1
-            print(f"  [{i}/{len(datasets)}] Added: {dataset.name}")
-        except Exception as e:
-            print(f"  [{i}/{len(datasets)}] Failed to add {dataset.name}: {e}")
-
-    print(f"\nSuccessfully added {success_count} out of {len(datasets)} datasets.")
-
-    # Print summary statistics
-    stats = manager.get_statistics()
-    print("\nDatabase Statistics:")
-    print(f"  Total datasets: {stats['total_datasets']}")
-    print("  By task type:")
-    for task_type, count in stats["by_task_type"].items():
-        print(f"    - {task_type}: {count}")
-    print("  By domain:")
-    for domain, count in sorted(
-        stats["by_domain"].items(), key=lambda x: x[1], reverse=True
-    )[:5]:
-        print(f"    - {domain}: {count}")
-    print(f"  Imbalanced datasets: {stats['imbalanced_datasets']}")
-    print(
-        f"  Average dataset size: {stats['avg_instances']} instances, {stats['avg_features']} features"
+# Import our modules
+try:
+    from dmdslab.datasets.uci_dataset_manager import (
+        DatasetInfo,
+        Domain,
+        TaskType,
+        UCIDatasetManager,
     )
+except ImportError:
+    logger.error("DmDSLab not installed. Please install it first.")
+    sys.exit(1)
 
-    print("\nDatabase initialization complete!")
-    print(f"Database location: {manager.db_path}")
+
+class MetadataManager:
+    """Manages dataset metadata files."""
+    
+    def __init__(self, base_path: Optional[Path] = None):
+        """Initialize metadata manager.
+        
+        Args:
+            base_path: Base path for metadata files. If None, uses default.
+        """
+        if base_path is None:
+            # Default to datasets_metadata/ in the same directory as this script
+            self.base_path = Path(__file__).parent / "datasets_metadata"
+        else:
+            self.base_path = Path(base_path)
+        
+        # Create directory structure if it doesn't exist
+        self.predefined_dir = self.base_path / "predefined"
+        self.discovered_dir = self.base_path / "discovered"
+        self.templates_dir = self.base_path / "templates"
+        
+        for dir_path in [self.predefined_dir, self.discovered_dir, self.templates_dir]:
+            dir_path.mkdir(parents=True, exist_ok=True)
+        
+        # Create default template if it doesn't exist
+        self._create_default_template()
+    
+    def _create_default_template(self):
+        """Create default dataset template."""
+        template_path = self.templates_dir / "dataset_template.json"
+        if not template_path.exists():
+            template = {
+                "id": 0,
+                "name": "Dataset Name",
+                "url": "https://archive.ics.uci.edu/dataset/{id}/",
+                "n_instances": 0,
+                "n_features": 0,
+                "task_type": "binary_classification",
+                "domain": "unknown",
+                "description": "Dataset description",
+                "year": None,
+                "has_missing_values": False,
+                "is_imbalanced": False,
+                "imbalance_ratio": None,
+                "class_balance": None,
+                "feature_names": None,
+                "target_name": None,
+                "tags": [],
+                "metadata": {}
+            }
+            
+            with open(template_path, 'w', encoding='utf-8') as f:
+                json.dump(template, f, indent=2)
+            
+            logger.info(f"Created template: {template_path}")
+    
+    def load_dataset_metadata(self, file_path: Path) -> Optional[Dict[str, Any]]:
+        """Load dataset metadata from JSON file.
+        
+        Args:
+            file_path: Path to JSON file
+            
+        Returns:
+            Dictionary with metadata or None if error
+        """
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return data
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in {file_path}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error loading {file_path}: {e}")
+            return None
+    
+    def save_dataset_metadata(self, metadata: Dict[str, Any], file_path: Path):
+        """Save dataset metadata to JSON file.
+        
+        Args:
+            metadata: Dataset metadata dictionary
+            file_path: Path to save the file
+        """
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False)
+            logger.info(f"Saved metadata to {file_path}")
+        except Exception as e:
+            logger.error(f"Error saving to {file_path}: {e}")
+            raise
+    
+    def validate_metadata(self, metadata: Dict[str, Any]) -> Tuple[bool, List[str]]:
+        """Validate dataset metadata.
+        
+        Args:
+            metadata: Dataset metadata dictionary
+            
+        Returns:
+            Tuple of (is_valid, list_of_errors)
+        """
+        errors = []
+        
+        # Required fields
+        required_fields = ['id', 'name', 'url', 'n_instances', 'n_features', 
+                          'task_type', 'domain']
+        for field in required_fields:
+            if field not in metadata:
+                errors.append(f"Missing required field: {field}")
+        
+        # Validate ID
+        if 'id' in metadata:
+            if not isinstance(metadata['id'], int) or metadata['id'] <= 0:
+                errors.append("ID must be a positive integer")
+        
+        # Validate task_type
+        if 'task_type' in metadata:
+            valid_task_types = [t.value for t in TaskType]
+            if metadata['task_type'] not in valid_task_types:
+                errors.append(f"Invalid task_type. Valid values: {valid_task_types}")
+        
+        # Validate domain
+        if 'domain' in metadata:
+            valid_domains = [d.value for d in Domain]
+            if metadata['domain'] not in valid_domains:
+                errors.append(f"Invalid domain. Valid values: {valid_domains}")
+        
+        # Validate numeric fields
+        numeric_fields = ['n_instances', 'n_features']
+        for field in numeric_fields:
+            if field in metadata:
+                if not isinstance(metadata[field], int) or metadata[field] < 0:
+                    errors.append(f"{field} must be a non-negative integer")
+        
+        # Validate imbalance ratio
+        if metadata.get('is_imbalanced') and 'imbalance_ratio' in metadata:
+            if metadata['imbalance_ratio'] is not None:
+                if not isinstance(metadata['imbalance_ratio'], (int, float)) or metadata['imbalance_ratio'] <= 1:
+                    errors.append("imbalance_ratio must be a number greater than 1")
+        
+        return len(errors) == 0, errors
+    
+    def get_all_metadata_files(self) -> Dict[str, List[Path]]:
+        """Get all metadata files organized by directory.
+        
+        Returns:
+            Dictionary with keys 'predefined' and 'discovered' containing file paths
+        """
+        files = {
+            'predefined': list(self.predefined_dir.glob('*.json')),
+            'discovered': list(self.discovered_dir.glob('*.json'))
+        }
+        return files
+    
+    def create_metadata_from_unknown(self, dataset_id: int, 
+                                   manager: UCIDatasetManager) -> Optional[Dict[str, Any]]:
+        """Create metadata by fetching unknown dataset.
+        
+        Args:
+            dataset_id: UCI dataset ID
+            manager: UCIDatasetManager instance
+            
+        Returns:
+            Metadata dictionary or None if failed
+        """
+        try:
+            logger.info(f"Fetching dataset {dataset_id} from UCI...")
+            
+            # Load dataset
+            model_data = manager.load_dataset(dataset_id, allow_unknown=True)
+            
+            # Extract basic info
+            metadata = {
+                "id": dataset_id,
+                "name": model_data.info.name,
+                "url": f"https://archive.ics.uci.edu/dataset/{dataset_id}/",
+                "n_instances": model_data.n_samples,
+                "n_features": model_data.n_features,
+                "description": f"Auto-discovered dataset. Please update this description.",
+                "auto_generated": True,
+                "discovered_date": datetime.now().isoformat(),
+                "needs_review": True,
+                "tags": ["auto-discovered", "needs-review"]
+            }
+            
+            # Try to determine task type
+            if model_data.target is None:
+                metadata["task_type"] = "clustering"
+            else:
+                import numpy as np
+                unique_values = len(np.unique(model_data.target))
+                if unique_values == 2:
+                    metadata["task_type"] = "binary_classification"
+                elif unique_values < 20:
+                    metadata["task_type"] = "multiclass_classification"
+                else:
+                    metadata["task_type"] = "regression"
+            
+            # Set domain as unknown
+            metadata["domain"] = "unknown"
+            
+            # Add feature names if available
+            if model_data.feature_names:
+                metadata["feature_names"] = model_data.feature_names
+            
+            # Check for missing values
+            if hasattr(model_data.features, 'isnull'):
+                metadata["has_missing_values"] = model_data.features.isnull().any().any()
+            else:
+                metadata["has_missing_values"] = False
+            
+            return metadata
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch dataset {dataset_id}: {e}")
+            return None
+
+
+def load_metadata_to_database(metadata_manager: MetadataManager, 
+                            db_manager: UCIDatasetManager,
+                            validate: bool = True) -> Tuple[int, int]:
+    """Load all metadata files into the database.
+    
+    Args:
+        metadata_manager: MetadataManager instance
+        db_manager: UCIDatasetManager instance
+        validate: Whether to validate metadata before loading
+        
+    Returns:
+        Tuple of (success_count, error_count)
+    """
+    success_count = 0
+    error_count = 0
+    
+    # Get all metadata files
+    all_files = metadata_manager.get_all_metadata_files()
+    
+    # Process predefined datasets first
+    logger.info(f"\nLoading predefined datasets...")
+    for file_path in sorted(all_files['predefined']):
+        logger.info(f"Processing {file_path.name}...")
+        
+        metadata = metadata_manager.load_dataset_metadata(file_path)
+        if metadata is None:
+            error_count += 1
+            continue
+        
+        # Validate if requested
+        if validate:
+            is_valid, errors = metadata_manager.validate_metadata(metadata)
+            if not is_valid:
+                logger.error(f"Validation failed for {file_path.name}:")
+                for error in errors:
+                    logger.error(f"  - {error}")
+                error_count += 1
+                continue
+        
+        # Convert to DatasetInfo
+        try:
+            dataset_info = DatasetInfo(
+                id=metadata['id'],
+                name=metadata['name'],
+                url=metadata['url'],
+                n_instances=metadata['n_instances'],
+                n_features=metadata['n_features'],
+                task_type=TaskType(metadata['task_type']),
+                domain=Domain(metadata['domain']),
+                class_balance=metadata.get('class_balance'),
+                description=metadata.get('description', ''),
+                year=metadata.get('year'),
+                has_missing_values=metadata.get('has_missing_values', False),
+                is_imbalanced=metadata.get('is_imbalanced', False),
+                imbalance_ratio=metadata.get('imbalance_ratio'),
+                feature_names=metadata.get('feature_names'),
+                target_name=metadata.get('target_name')
+            )
+            
+            # Add to database
+            db_manager.add_dataset(dataset_info)
+            success_count += 1
+            logger.info(f"  ✓ Added: {dataset_info.name} (ID: {dataset_info.id})")
+            
+        except Exception as e:
+            logger.error(f"Failed to add {file_path.name}: {e}")
+            error_count += 1
+    
+    # Process discovered datasets
+    if all_files['discovered']:
+        logger.info(f"\nLoading discovered datasets...")
+        for file_path in sorted(all_files['discovered']):
+            # Same process as above
+            metadata = metadata_manager.load_dataset_metadata(file_path)
+            if metadata is None:
+                error_count += 1
+                continue
+            
+            try:
+                dataset_info = DatasetInfo(
+                    id=metadata['id'],
+                    name=metadata['name'],
+                    url=metadata['url'],
+                    n_instances=metadata['n_instances'],
+                    n_features=metadata['n_features'],
+                    task_type=TaskType(metadata['task_type']),
+                    domain=Domain(metadata.get('domain', 'unknown')),
+                    description=metadata.get('description', ''),
+                    has_missing_values=metadata.get('has_missing_values', False)
+                )
+                
+                db_manager.add_dataset(dataset_info)
+                success_count += 1
+                logger.info(f"  ✓ Added discovered: {dataset_info.name} (ID: {dataset_info.id})")
+                
+            except Exception as e:
+                logger.error(f"Failed to add {file_path.name}: {e}")
+                error_count += 1
+    
+    return success_count, error_count
+
+
+def process_unknown_datasets(metadata_manager: MetadataManager,
+                           db_manager: UCIDatasetManager,
+                           interactive: bool = False):
+    """Process unknown datasets and generate metadata files.
+    
+    Args:
+        metadata_manager: MetadataManager instance
+        db_manager: UCIDatasetManager instance
+        interactive: Whether to run in interactive mode
+    """
+    # Load unknown IDs
+    unknown_info = db_manager._load_unknown_ids()
+    
+    if not unknown_info:
+        logger.info("No unknown datasets found.")
+        return
+    
+    logger.info(f"\nFound {len(unknown_info)} unknown dataset IDs")
+    
+    generated_count = 0
+    failed_count = 0
+    
+    for dataset_id_str, info in unknown_info.items():
+        dataset_id = int(dataset_id_str)
+        
+        # Check if metadata file already exists
+        existing_file = metadata_manager.discovered_dir / f"dataset_{dataset_id}.json"
+        if existing_file.exists():
+            logger.info(f"Metadata file already exists for dataset {dataset_id}")
+            continue
+        
+        logger.info(f"\nProcessing dataset {dataset_id}...")
+        logger.info(f"  Load count: {info.get('load_count', 0)}")
+        
+        if interactive:
+            response = input("Generate metadata file? (y/n/s[kip all]): ").lower()
+            if response == 's':
+                break
+            elif response != 'y':
+                continue
+        
+        # Generate metadata
+        metadata = metadata_manager.create_metadata_from_unknown(dataset_id, db_manager)
+        
+        if metadata:
+            # Save to file
+            output_path = metadata_manager.discovered_dir / f"dataset_{dataset_id}.json"
+            metadata_manager.save_dataset_metadata(metadata, output_path)
+            generated_count += 1
+            
+            logger.info(f"  ✓ Generated metadata file: {output_path.name}")
+            
+            if interactive:
+                edit = input("Edit metadata file now? (y/n): ").lower()
+                if edit == 'y':
+                    import subprocess
+                    import os
+                    editor = os.environ.get('EDITOR', 'nano')
+                    subprocess.call([editor, str(output_path)])
+        else:
+            failed_count += 1
+            logger.error(f"  ✗ Failed to generate metadata for dataset {dataset_id}")
+    
+    logger.info(f"\nSummary: {generated_count} generated, {failed_count} failed")
+
+
+def show_statistics(metadata_manager: MetadataManager, db_manager: UCIDatasetManager):
+    """Show statistics about metadata files and database.
+    
+    Args:
+        metadata_manager: MetadataManager instance
+        db_manager: UCIDatasetManager instance
+    """
+    # File statistics
+    all_files = metadata_manager.get_all_metadata_files()
+    
+    print("\n" + "=" * 60)
+    print("METADATA FILES STATISTICS")
+    print("=" * 60)
+    
+    print(f"\nMetadata directory: {metadata_manager.base_path}")
+    print(f"Predefined datasets: {len(all_files['predefined'])}")
+    print(f"Discovered datasets: {len(all_files['discovered'])}")
+    
+    # List files by category
+    if all_files['predefined']:
+        print("\nPredefined datasets:")
+        for f in sorted(all_files['predefined'])[:10]:
+            print(f"  - {f.name}")
+        if len(all_files['predefined']) > 10:
+            print(f"  ... and {len(all_files['predefined']) - 10} more")
+    
+    if all_files['discovered']:
+        print("\nDiscovered datasets:")
+        for f in sorted(all_files['discovered'])[:10]:
+            print(f"  - {f.name}")
+        if len(all_files['discovered']) > 10:
+            print(f"  ... and {len(all_files['discovered']) - 10} more")
+    
+    # Database statistics
+    stats = db_manager.get_statistics()
+    
+    print("\n" + "=" * 60)
+    print("DATABASE STATISTICS")
+    print("=" * 60)
+    
+    print(f"\nTotal datasets in database: {stats['total_datasets']}")
+    
+    if stats['by_task_type']:
+        print("\nBy task type:")
+        for task_type, count in sorted(stats['by_task_type'].items()):
+            print(f"  - {task_type}: {count}")
+    
+    if stats['by_domain']:
+        print("\nTop domains:")
+        for domain, count in sorted(stats['by_domain'].items(), 
+                                   key=lambda x: x[1], reverse=True)[:5]:
+            print(f"  - {domain}: {count}")
+    
+    print(f"\nImbalanced datasets: {stats['imbalanced_datasets']}")
+    print(f"Average dataset size: {stats['avg_instances']} instances × {stats['avg_features']} features")
+    
+    # Unknown datasets
+    if stats['unknown_datasets_requested'] > 0:
+        print(f"\nUnknown datasets requested: {stats['unknown_datasets_requested']}")
+        print(f"Unknown IDs: {stats['unknown_ids'][:10]}")
+        if len(stats['unknown_ids']) > 10:
+            print(f"  ... and {len(stats['unknown_ids']) - 10} more")
+
+
+def validate_all_files(metadata_manager: MetadataManager):
+    """Validate all metadata files.
+    
+    Args:
+        metadata_manager: MetadataManager instance
+    """
+    all_files = metadata_manager.get_all_metadata_files()
+    total_files = len(all_files['predefined']) + len(all_files['discovered'])
+    
+    logger.info(f"\nValidating {total_files} metadata files...")
+    
+    valid_count = 0
+    invalid_count = 0
+    
+    for category, files in all_files.items():
+        if files:
+            logger.info(f"\nValidating {category} datasets...")
+            
+            for file_path in sorted(files):
+                metadata = metadata_manager.load_dataset_metadata(file_path)
+                
+                if metadata is None:
+                    invalid_count += 1
+                    continue
+                
+                is_valid, errors = metadata_manager.validate_metadata(metadata)
+                
+                if is_valid:
+                    valid_count += 1
+                    logger.info(f"  ✓ {file_path.name}")
+                else:
+                    invalid_count += 1
+                    logger.error(f"  ✗ {file_path.name}")
+                    for error in errors:
+                        logger.error(f"    - {error}")
+    
+    logger.info(f"\nValidation complete: {valid_count} valid, {invalid_count} invalid")
+
+
+def generate_single_metadata(metadata_manager: MetadataManager,
+                           db_manager: UCIDatasetManager,
+                           dataset_id: int,
+                           force: bool = False):
+    """Generate metadata file for a single dataset.
+    
+    Args:
+        metadata_manager: MetadataManager instance
+        db_manager: UCIDatasetManager instance
+        dataset_id: UCI dataset ID
+        force: Whether to overwrite existing file
+    """
+    output_path = metadata_manager.discovered_dir / f"dataset_{dataset_id}.json"
+    
+    if output_path.exists() and not force:
+        logger.warning(f"Metadata file already exists: {output_path}")
+        response = input("Overwrite? (y/n): ")
+        if response.lower() != 'y':
+            return
+    
+    # Check if already in database
+    existing = db_manager.get_dataset_info(dataset_id)
+    if existing:
+        logger.info(f"Dataset {dataset_id} already in database: {existing.name}")
+        
+        # Convert to metadata dict
+        metadata = existing.to_dict()
+        metadata['tags'] = ['from-database']
+        metadata['exported_date'] = datetime.now().isoformat()
+        
+        # Save to discovered directory
+        metadata_manager.save_dataset_metadata(metadata, output_path)
+        logger.info(f"Exported metadata to: {output_path}")
+    else:
+        # Generate from UCI
+        logger.info(f"Fetching dataset {dataset_id} from UCI...")
+        metadata = metadata_manager.create_metadata_from_unknown(dataset_id, db_manager)
+        
+        if metadata:
+            metadata_manager.save_dataset_metadata(metadata, output_path)
+            logger.info(f"Generated metadata file: {output_path}")
+        else:
+            logger.error(f"Failed to generate metadata for dataset {dataset_id}")
+
+
+def main():
+    """Main function."""
+    parser = argparse.ArgumentParser(
+        description="UCI Database Initialization (File-based)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Initialize database from metadata files
+  python initialize_uci_database.py
+  
+  # Process unknown datasets
+  python initialize_uci_database.py --process-unknown
+  
+  # Generate metadata for specific dataset
+  python initialize_uci_database.py --generate-metadata 186
+  
+  # Validate all metadata files
+  python initialize_uci_database.py --validate
+  
+  # Show statistics
+  python initialize_uci_database.py --stats
+        """
+    )
+    
+    parser.add_argument(
+        "--metadata-dir",
+        type=Path,
+        help="Base directory for metadata files (default: ./datasets_metadata)"
+    )
+    
+    parser.add_argument(
+        "--process-unknown",
+        action="store_true",
+        help="Process unknown datasets and generate metadata files"
+    )
+    
+    parser.add_argument(
+        "--generate-metadata",
+        type=int,
+        metavar="ID",
+        help="Generate metadata file for specific dataset ID"
+    )
+    
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate all metadata files"
+    )
+    
+    parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="Show statistics about metadata files and database"
+    )
+    
+    parser.add_argument(
+        "--no-validation",
+        action="store_true",
+        help="Skip validation when loading metadata"
+    )
+    
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Run in interactive mode"
+    )
+    
+    parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Clear database before loading"
+    )
+    
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force overwrite existing files"
+    )
+    
+    args = parser.parse_args()
+    
+    try:
+        # Initialize managers
+        metadata_manager = MetadataManager(args.metadata_dir)
+        db_manager = UCIDatasetManager()
+        
+        # Handle different commands
+        if args.validate:
+            validate_all_files(metadata_manager)
+        
+        elif args.stats:
+            show_statistics(metadata_manager, db_manager)
+        
+        elif args.generate_metadata:
+            generate_single_metadata(
+                metadata_manager, 
+                db_manager, 
+                args.generate_metadata,
+                force=args.force
+            )
+        
+        elif args.process_unknown:
+            process_unknown_datasets(
+                metadata_manager,
+                db_manager,
+                interactive=args.interactive
+            )
+        
+        else:
+            # Default: load metadata to database
+            logger.info("UCI Database Initialization")
+            logger.info("=" * 50)
+            
+            # Check existing data
+            stats = db_manager.get_statistics()
+            if stats["total_datasets"] > 0 and not args.clear:
+                logger.info(f"Database contains {stats['total_datasets']} datasets")
+                response = input("Clear and reload? (y/N): ")
+                if response.lower() == 'y':
+                    count = db_manager.delete_all_datasets()
+                    logger.info(f"Cleared {count} datasets")
+                else:
+                    logger.info("Keeping existing data. Loading new datasets...")
+            elif args.clear:
+                count = db_manager.delete_all_datasets()
+                logger.info(f"Cleared {count} datasets")
+            
+            # Load metadata files
+            success, errors = load_metadata_to_database(
+                metadata_manager,
+                db_manager,
+                validate=not args.no_validation
+            )
+            
+            logger.info(f"\nComplete: {success} loaded, {errors} errors")
+            
+            # Show final statistics
+            final_stats = db_manager.get_statistics()
+            logger.info(f"\nDatabase now contains {final_stats['total_datasets']} datasets")
+            
+    except KeyboardInterrupt:
+        logger.info("\nOperation cancelled by user")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    try:
-        initialize_database()
-    except KeyboardInterrupt:
-        print("\n\nInitialization interrupted by user.")
-        sys.exit(1)
-    except Exception as e:
-        print(f"\n\nError during initialization: {e}")
-        sys.exit(1)
+    main()

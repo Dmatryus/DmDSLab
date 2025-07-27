@@ -1,8 +1,8 @@
 """
-UCI Dataset Manager for DmDSLab (v2)
+UCI Dataset Manager for DmDSLab (v2.1)
 
-This module provides a convenient interface for working with UCI Machine Learning Repository datasets.
-It uses ModelData and DataSplit containers for better integration with the DmDSLab ecosystem.
+Enhanced version with support for loading datasets not in the database.
+Unknown dataset IDs are logged to a file for future processing.
 
 Author: Dmatryus Detry
 License: Apache 2.0
@@ -11,12 +11,12 @@ License: Apache 2.0
 import json
 import logging
 import sqlite3
+import warnings
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
-
-from dmdslab import DataInfo, DataSplit, ModelData, create_data_split, create_kfold_data
+from typing import Any, Dict, List, Optional, Set, Union
 
 try:
     from ucimlrepo import fetch_ucirepo
@@ -26,6 +26,13 @@ except ImportError:
     ) from None
 
 # Import our data structures
+from ml_data_container import (
+    DataInfo,
+    DataSplit,
+    ModelData,
+    create_data_split,
+    create_kfold_data,
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -38,6 +45,7 @@ class TaskType(Enum):
     MULTICLASS_CLASSIFICATION = "multiclass_classification"
     REGRESSION = "regression"
     CLUSTERING = "clustering"
+    UNKNOWN = "unknown"  # Для неизвестных датасетов
 
 
 class Domain(Enum):
@@ -62,6 +70,7 @@ class Domain(Enum):
     MATERIALS = "materials"
     DOCUMENT_ANALYSIS = "document_analysis"
     ARTIFICIAL = "artificial"
+    UNKNOWN = "unknown"  # Для неизвестных датасетов
 
 
 @dataclass
@@ -155,6 +164,79 @@ class DatasetInfo:
             metadata=metadata,
         )
 
+    @classmethod
+    def create_unknown(cls, dataset_id: int, dataset_obj: Any) -> "DatasetInfo":
+        """Create DatasetInfo for unknown dataset from fetched object."""
+        # Извлекаем информацию из загруженного объекта
+        try:
+            # Пытаемся получить размеры данных
+            X = dataset_obj.data.features
+            y = dataset_obj.data.targets
+
+            n_instances = len(X) if hasattr(X, "__len__") else 0
+            n_features = X.shape[1] if hasattr(X, "shape") and len(X.shape) > 1 else 0
+
+            # Пытаемся получить имя датасета
+            name = getattr(
+                dataset_obj.metadata, "name", f"Unknown Dataset {dataset_id}"
+            )
+
+            # Пытаемся получить имена признаков
+            feature_names = None
+            if hasattr(dataset_obj.data, "feature_names"):
+                try:
+                    feature_names = list(dataset_obj.data.feature_names)
+                except:
+                    pass
+            elif hasattr(X, "columns"):
+                try:
+                    feature_names = list(X.columns)
+                except:
+                    pass
+
+            # Пытаемся определить тип задачи
+            task_type = TaskType.UNKNOWN
+            if y is not None:
+                if hasattr(y, "nunique"):
+                    n_classes = y.nunique()
+                    if n_classes == 2:
+                        task_type = TaskType.BINARY_CLASSIFICATION
+                    elif n_classes > 2 and n_classes < 20:
+                        task_type = TaskType.MULTICLASS_CLASSIFICATION
+                else:
+                    # Для numpy arrays
+                    try:
+                        unique_values = len(set(y.flatten()))
+                        if unique_values == 2:
+                            task_type = TaskType.BINARY_CLASSIFICATION
+                        elif unique_values > 2 and unique_values < 20:
+                            task_type = TaskType.MULTICLASS_CLASSIFICATION
+                    except:
+                        pass
+            else:
+                task_type = TaskType.CLUSTERING
+
+        except Exception as e:
+            logger.warning(f"Error extracting metadata from dataset {dataset_id}: {e}")
+            # Fallback values
+            n_instances = 0
+            n_features = 0
+            name = f"Unknown Dataset {dataset_id}"
+            feature_names = None
+            task_type = TaskType.UNKNOWN
+
+        return cls(
+            id=dataset_id,
+            name=name,
+            url=f"https://archive.ics.uci.edu/dataset/{dataset_id}/",
+            n_instances=n_instances,
+            n_features=n_features,
+            task_type=task_type,
+            domain=Domain.UNKNOWN,
+            description=f"Automatically discovered dataset (ID: {dataset_id})",
+            feature_names=feature_names,
+        )
+
 
 class UCIDatasetManager:
     """
@@ -163,10 +245,13 @@ class UCIDatasetManager:
     This class provides functionality to:
     - Store and retrieve dataset metadata in a local SQLite database
     - Filter datasets by various criteria
-    - Load datasets as ModelData objects
+    - Load datasets as ModelData objects (even if not in database)
     - Create DataSplit objects with train/validation/test splits
     - Cache loaded datasets for efficiency
+    - Track unknown dataset IDs for future processing
     """
+
+    UNKNOWN_IDS_FILE = "unknown_uci_ids.json"
 
     def __init__(self, db_path: Optional[Union[str, Path]] = None):
         """
@@ -178,10 +263,12 @@ class UCIDatasetManager:
         """
         if db_path is None:
             self.db_path = Path(__file__).parent / "db" / "uci_datasets.db"
-
         else:
             self.db_path = Path(db_path)
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Path for unknown IDs file
+        self.unknown_ids_path = self.db_path.parent / self.UNKNOWN_IDS_FILE
 
         # Create database connection
         self._init_db()
@@ -216,6 +303,47 @@ class UCIDatasetManager:
             )
             conn.commit()
 
+    def _load_unknown_ids(self) -> Dict[int, Dict[str, Any]]:
+        """Load unknown dataset IDs from file."""
+        if self.unknown_ids_path.exists():
+            try:
+                with open(self.unknown_ids_path, "r") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Error loading unknown IDs file: {e}")
+                return {}
+        return {}
+
+    def _save_unknown_id(self, dataset_id: int, info: Optional[Dict[str, Any]] = None):
+        """Save unknown dataset ID to file."""
+        unknown_ids = self._load_unknown_ids()
+
+        if dataset_id not in unknown_ids:
+            unknown_ids[str(dataset_id)] = {
+                "first_seen": datetime.now().isoformat(),
+                "load_count": 1,
+                "info": info or {},
+            }
+        else:
+            unknown_ids[str(dataset_id)]["load_count"] += 1
+            unknown_ids[str(dataset_id)]["last_seen"] = datetime.now().isoformat()
+            if info:
+                unknown_ids[str(dataset_id)]["info"].update(info)
+
+        try:
+            with open(self.unknown_ids_path, "w") as f:
+                json.dump(unknown_ids, f, indent=2)
+            logger.info(
+                f"Saved unknown dataset ID {dataset_id} to {self.unknown_ids_path}"
+            )
+        except Exception as e:
+            logger.error(f"Error saving unknown ID {dataset_id}: {e}")
+
+    def get_unknown_ids(self) -> List[int]:
+        """Get list of unknown dataset IDs that were requested."""
+        unknown_ids = self._load_unknown_ids()
+        return [int(id_str) for id_str in unknown_ids.keys()]
+
     def add_dataset(self, dataset_info: DatasetInfo) -> None:
         """
         Add a dataset to the database.
@@ -249,7 +377,9 @@ class UCIDatasetManager:
             cursor = conn.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
             row = cursor.fetchone()
 
-        return DatasetInfo.from_dict(dict(row)) if row else None
+        if row:
+            return DatasetInfo.from_dict(dict(row))
+        return None
 
     def filter_datasets(
         self,
@@ -330,67 +460,94 @@ class UCIDatasetManager:
 
         return [DatasetInfo.from_dict(dict(row)) for row in rows]
 
-    def load_dataset(self, dataset_id: int) -> ModelData:
+    def load_dataset(self, dataset_id: int, allow_unknown: bool = True) -> ModelData:
         """
         Load a dataset from UCI repository as ModelData.
 
         Args:
             dataset_id: UCI repository dataset ID
+            allow_unknown: If True, loads dataset even if not in database
 
         Returns:
             ModelData object containing the dataset
 
         Raises:
-            ValueError: If dataset not found in database
+            ValueError: If dataset not found and allow_unknown=False
             Exception: If dataset loading fails
         """
         dataset_info = self.get_dataset_info(dataset_id)
-        if not dataset_info:
+
+        if not dataset_info and not allow_unknown:
             raise ValueError(f"Dataset with ID {dataset_id} not found in database")
 
-        logger.info(f"Loading dataset: {dataset_info.name} (ID: {dataset_id})")
+        if not dataset_info:
+            warnings.warn(
+                f"Dataset ID {dataset_id} not found in database. "
+                f"Loading directly from UCI repository. "
+                f"Consider adding metadata for this dataset.",
+                UserWarning,
+            )
+            logger.warning(f"Loading unknown dataset with ID {dataset_id}")
+
+        logger.info(
+            f"Loading dataset: {dataset_info.name if dataset_info else f'Unknown (ID: {dataset_id})'}"
+        )
 
         try:
-            return self._load_by_id(dataset_id, dataset_info)
+            # Fetch dataset from UCI repository
+            dataset = fetch_ucirepo(id=dataset_id)
+            X = dataset.data.features
+            y = dataset.data.targets
+
+            # Convert target to 1D array if necessary
+            if y is not None and len(y.shape) > 1 and y.shape[1] == 1:
+                y = y.ravel()
+
+            # If dataset_info is None, create it from fetched data
+            if not dataset_info:
+                dataset_info = DatasetInfo.create_unknown(dataset_id, dataset)
+
+                # Save information about this unknown dataset
+                self._save_unknown_id(
+                    dataset_id,
+                    {
+                        "name": dataset_info.name,
+                        "n_instances": dataset_info.n_instances,
+                        "n_features": dataset_info.n_features,
+                        "task_type": dataset_info.task_type.value,
+                    },
+                )
+
+            # Try to get feature names from the fetched dataset
+            feature_names = dataset_info.feature_names
+            if feature_names is None:
+                if (
+                    hasattr(dataset.data, "feature_names")
+                    and dataset.data.feature_names is not None
+                ):
+                    try:
+                        feature_names = list(dataset.data.feature_names)
+                    except (TypeError, AttributeError):
+                        feature_names = None
+                elif hasattr(X, "columns"):
+                    try:
+                        feature_names = list(X.columns)
+                    except (TypeError, AttributeError):
+                        feature_names = None
+
+            # Create ModelData with metadata
+            return ModelData(
+                features=X,
+                target=y,
+                feature_names=feature_names,
+                info=dataset_info.to_data_info(),
+            )
+
         except Exception as e:
             logger.error(f"Failed to load dataset {dataset_id}: {str(e)}")
+            if not dataset_info:
+                self._save_unknown_id(dataset_id, {"error": str(e)})
             raise
-
-    def _load_by_id(self, dataset_id, dataset_info):
-        # Fetch dataset from UCI repository
-        dataset = fetch_ucirepo(id=dataset_id)
-        X = dataset.data.features
-        y = dataset.data.targets
-
-        # Convert target to 1D array if necessary
-        if y is not None and len(y.shape) > 1 and y.shape[1] == 1:
-            y = y.values.ravel()
-
-        # Try to get feature names from the fetched dataset
-        feature_names = dataset_info.feature_names
-        if (
-            hasattr(dataset.data, "feature_names")
-            and dataset.data.feature_names is not None
-        ):
-            if feature_names is None:
-                try:
-                    feature_names = list(dataset.data.feature_names)
-                except (TypeError, AttributeError):
-                    feature_names = None
-        elif hasattr(X, "columns"):
-            if feature_names is None:
-                try:
-                    feature_names = list(X.columns)
-                except (TypeError, AttributeError):
-                    feature_names = None
-
-        # Create ModelData with metadata
-        return ModelData(
-            features=X,
-            target=y,
-            feature_names=feature_names,
-            info=dataset_info.to_data_info(),
-        )
 
     def load_dataset_split(
         self,
@@ -399,6 +556,7 @@ class UCIDatasetManager:
         validation_size: Optional[float] = None,
         random_state: Optional[int] = None,
         stratify: bool = None,
+        allow_unknown: bool = True,
     ) -> DataSplit:
         """
         Load a dataset and create train/validation/test splits.
@@ -409,15 +567,16 @@ class UCIDatasetManager:
             validation_size: Proportion of data for validation set (default: None)
             random_state: Random seed for reproducibility
             stratify: Whether to stratify splits. If None, auto-detect based on task type
+            allow_unknown: If True, loads dataset even if not in database
 
         Returns:
             DataSplit object with train/validation/test sets
 
         Raises:
-            ValueError: If dataset not found or splitting parameters invalid
+            ValueError: If dataset not found and allow_unknown=False
         """
         # Load the dataset
-        model_data = self.load_dataset(dataset_id)
+        model_data = self.load_dataset(dataset_id, allow_unknown=allow_unknown)
 
         # Auto-detect stratification for classification tasks
         if stratify is None and model_data.info:
@@ -449,6 +608,7 @@ class UCIDatasetManager:
         n_splits: int = 5,
         shuffle: bool = True,
         random_state: Optional[int] = None,
+        allow_unknown: bool = True,
     ) -> List[DataSplit]:
         """
         Load a dataset and create k-fold cross-validation splits.
@@ -458,15 +618,16 @@ class UCIDatasetManager:
             n_splits: Number of folds (default: 5)
             shuffle: Whether to shuffle data before splitting
             random_state: Random seed for reproducibility
+            allow_unknown: If True, loads dataset even if not in database
 
         Returns:
             List of DataSplit objects, one for each fold
 
         Raises:
-            ValueError: If dataset not found
+            ValueError: If dataset not found and allow_unknown=False
         """
         # Load the dataset
-        model_data = self.load_dataset(dataset_id)
+        model_data = self.load_dataset(dataset_id, allow_unknown=allow_unknown)
 
         # Create k-fold splits
         splits = create_kfold_data(
@@ -524,6 +685,11 @@ class UCIDatasetManager:
             stats["avg_instances"] = round(avg_instances) if avg_instances else 0
             stats["avg_features"] = round(avg_features) if avg_features else 0
 
+        # Add unknown IDs statistics
+        unknown_ids = self.get_unknown_ids()
+        stats["unknown_datasets_requested"] = len(unknown_ids)
+        stats["unknown_ids"] = unknown_ids
+
         return stats
 
     def delete_dataset(self, dataset_id: int) -> bool:
@@ -570,7 +736,6 @@ class UCIDatasetManager:
         This method is useful for cleanup, especially on Windows where
         file handles may remain open.
         """
-
         # Force garbage collection to close any lingering connections
         import gc
 
@@ -605,48 +770,19 @@ if __name__ == "__main__":
     for key, value in stats.items():
         print(f"  {key}: {value}")
 
-    # Example: Find imbalanced binary classification datasets
+    # Example: Load unknown dataset
     print("\n" + "=" * 80)
-    print("Imbalanced Binary Classification Datasets (1K-50K instances):")
-    datasets = manager.filter_datasets(
-        task_type=TaskType.BINARY_CLASSIFICATION,
-        is_imbalanced=True,
-        min_instances=1000,
-        max_instances=50000,
-    )
-    print_dataset_summary(datasets)
-
-    # Example: Load a specific dataset as ModelData
-    if stats["total_datasets"] > 0 and datasets:
-        print("\n" + "=" * 80)
-        print("Loading first available dataset as ModelData...")
-        first_dataset = datasets[0]
-
-        # Load as ModelData
-        model_data = manager.load_dataset(first_dataset.id)
-        print(f"\nDataset: {model_data.info.name}")
+    print("Testing unknown dataset loading...")
+    try:
+        # Попытка загрузить датасет, которого нет в базе
+        unknown_id = 999  # Предполагаем, что этого ID нет в базе
+        model_data = manager.load_dataset(unknown_id)
+        print(f"Successfully loaded unknown dataset: {model_data.info.name}")
         print(f"Shape: {model_data.shape}")
-        print(f"Features: {model_data.n_features}")
-        print(f"Samples: {model_data.n_samples}")
+    except Exception as e:
+        print(f"Failed to load unknown dataset: {e}")
 
-        # Create train/test split
-        print("\nCreating train/test split...")
-        split = manager.load_dataset_split(
-            first_dataset.id, test_size=0.2, random_state=42
-        )
-        print(f"Train size: {split.train.n_samples}")
-        print(f"Test size: {split.test.n_samples}")
-        print(f"Split ratios: {split.get_split_ratios()}")
-
-        # Create k-fold splits
-        print("\nCreating 5-fold cross-validation splits...")
-        kfold_splits = manager.load_dataset_kfold(
-            first_dataset.id, n_splits=5, random_state=42
-        )
-        print(f"Number of folds: {len(kfold_splits)}")
-        print(
-            f"First fold - Train: {kfold_splits[0].train.n_samples}, "
-            f"Val: {kfold_splits[0].validation.n_samples}"
-        )
-    else:
-        print("\nNo datasets found. Run initialize_uci_database.py first.")
+    # Show unknown IDs
+    unknown_ids = manager.get_unknown_ids()
+    if unknown_ids:
+        print(f"\nUnknown dataset IDs requested: {unknown_ids}")

@@ -36,7 +36,7 @@ from dmdslab.datasets.uci import (
 )
 
 # Версия модуля datasets
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
 # Публичный API
 __all__ = [

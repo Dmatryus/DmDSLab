@@ -4,14 +4,11 @@
 Покрывают основную функциональность загрузки датасетов из UCI ML Repository.
 """
 
-import json
 import logging
-import pickle
 import shutil
 import tempfile
-from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pandas as pd
@@ -19,17 +16,13 @@ import pytest
 
 from dmdslab.datasets import ModelData
 from dmdslab.datasets.uci import (
-    CacheError,
     CacheManager,
-    CacheStatus,
     DatasetInfo,
     DatasetNotFoundError,
     Domain,
     MetadataExtractor,
     TaskType,
-    UCIDatasetError,
     UCIDatasetManager,
-    ValidationError,
 )
 
 
@@ -56,7 +49,7 @@ class TestCacheManager:
         assert not temp_cache_dir.exists()
 
         # Создаем менеджер
-        cache_manager = CacheManager(cache_dir=temp_cache_dir)
+        CacheManager(cache_dir=temp_cache_dir)
 
         # Директория должна быть создана
         assert temp_cache_dir.exists()
@@ -437,7 +430,7 @@ class TestUCIDatasetManager:
             manager.load_dataset(999)
 
         # С raise_on_missing=False
-        manager_no_raise = UCIDatasetManager(
+        UCIDatasetManager(
             cache_dir=manager.cache_dir, raise_on_missing=False, show_progress=False
         )
 
@@ -476,7 +469,7 @@ class TestUCIDatasetManager:
         # Получаем информацию
         info = manager.get_cache_info()
 
-        assert info["cache_enabled"] == True
+        assert info["cache_enabled"]
         assert info["total_datasets"] == 2
         assert "total_size" in info
         assert "datasets" in info
@@ -488,7 +481,7 @@ class TestUCIDatasetManager:
 
         # Проверяем, что кеш отключен
         info = manager.get_cache_info()
-        assert info["cache_enabled"] == False
+        assert not info["cache_enabled"]
         assert "message" in info
 
     @patch("dmdslab.datasets.uci.uci_manager.ucimlrepo.fetch.fetch_ucirepo")
@@ -531,7 +524,7 @@ class TestUCIDatasetManager:
         mock_fetch.return_value = mock_data
 
         # Загружаем
-        result = manager.load_dataset(1)
+        manager.load_dataset(1)
 
         # Проверяем метаданные о категориальных признаках
         # (зависит от реализации, где хранится эта информация)
@@ -576,7 +569,7 @@ class TestUtilityFunctions:
         """Тест создания progress bar."""
         from dmdslab.datasets.uci.uci_utils import create_progress_bar
 
-        pbar = create_progress_bar(total=100, desc="Test", unit="items")
+        create_progress_bar(total=100, desc="Test", unit="items")
 
         mock_tqdm.assert_called_once()
         call_kwargs = mock_tqdm.call_args[1]

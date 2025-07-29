@@ -19,7 +19,6 @@ from dmdslab.datasets.uci.uci_types import (
     DEFAULT_PICKLE_PROTOCOL,
     SUPPORTED_PICKLE_PROTOCOLS,
     CacheStatus,
-    DatasetID,
     Domain,
     LogLevel,
     TaskType,

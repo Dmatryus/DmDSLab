@@ -64,7 +64,7 @@ isort dmdslab/ tests/
 black dmdslab/ tests/
 
 # Проверка типов
-ruff check --fix dmdslab/
+ruff check --fix dmdslab/ tests/
 ```
 
 ### Документация

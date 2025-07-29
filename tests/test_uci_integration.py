@@ -12,15 +12,15 @@ from pathlib import Path
 from typing import Any, Dict
 
 import numpy as np
-import pandas as pd
 import pytest
 
 from dmdslab.datasets import ModelData
-from dmdslab.datasets.uci import UCILoader  # Алиас
 from dmdslab.datasets.uci import (
     POPULAR_DATASETS,
     CacheManager,
+    NetworkError,
     UCIDatasetManager,
+    UCILoader,  # Алиас
     clear_cache,
     get_cache_info,
     load_by_name,
@@ -62,7 +62,6 @@ def create_cached_dataset(
 ) -> None:
     """Создание кешированного датасета для тестов."""
     import json
-    import pickle
 
     from dmdslab.datasets.uci.uci_utils import format_cache_size, get_timestamp
 
@@ -80,7 +79,7 @@ def create_cached_dataset(
     # Загружаем существующий индекс или создаем новый
     index_path = cache_dir / "cache_index.json"
     if index_path.exists():
-        with open(index_path, "r", encoding="utf-8") as f:
+        with open(index_path, encoding="utf-8") as f:
             index = json.load(f)
     else:
         index = {}
@@ -153,7 +152,7 @@ class TestQuickLoadFunctions:
 
         # НЕ создаем датасет в кеше!
         # Пытаемся загрузить несуществующий датасет
-        with pytest.raises(Exception):
+        with pytest.raises(NetworkError):
             manager.load_dataset(99999)  # Должна быть ошибка
 
     def test_load_datasets_multiple(self, populated_cache):
@@ -257,7 +256,7 @@ class TestQuickLoadFunctions:
         # Получаем информацию
         info = get_cache_info(cache_dir=cache_dir)
 
-        assert info["cache_enabled"] == True
+        assert info["cache_enabled"]
         assert info["total_datasets"] == 3
         assert "total_size" in info
         assert len(info["datasets"]) == 3
@@ -276,7 +275,7 @@ class TestQuickLoadFunctions:
 
             # Кеш должен быть отключен
             info = manager.get_cache_info()
-            assert info["cache_enabled"] == False
+            assert not info["cache_enabled"]
 
 
 class TestPopularDatasets:
@@ -364,7 +363,7 @@ class TestLoggingIntegration:
         with tempfile.TemporaryDirectory() as temp_dir:
             # DEBUG уровень
             with caplog.at_level(logging.DEBUG):
-                manager = UCIDatasetManager(
+                UCIDatasetManager(
                     cache_dir=temp_dir, log_level="DEBUG", show_progress=False
                 )
                 assert "инициализирован" in caplog.text
@@ -373,7 +372,7 @@ class TestLoggingIntegration:
 
             # ERROR уровень - не должно быть DEBUG сообщений
             with caplog.at_level(logging.ERROR):
-                manager = UCIDatasetManager(
+                UCIDatasetManager(
                     cache_dir=temp_dir, log_level="ERROR", show_progress=False
                 )
                 assert "инициализирован" not in caplog.text

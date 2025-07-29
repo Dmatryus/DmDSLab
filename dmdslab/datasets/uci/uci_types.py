@@ -146,6 +146,6 @@ class DatasetStructure:
 
 # Константы для проверки типов
 NUMERIC_DTYPES = (np.integer, np.floating, np.complexfloating)
-CATEGORICAL_DTYPES = (np.object_, np.unicode_, np.string_)
+CATEGORICAL_DTYPES = (np.object_, np.string_)
 SUPPORTED_PICKLE_PROTOCOLS = (4, 5)  # Поддерживаемые протоколы pickle
 DEFAULT_PICKLE_PROTOCOL = 4  # По умолчанию для совместимости

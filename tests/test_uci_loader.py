@@ -5,32 +5,32 @@
 """
 
 import json
+import logging
 import pickle
 import shutil
 import tempfile
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime
-import logging
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from dmdslab.datasets import ModelData
 from dmdslab.datasets.uci import (
-    UCIDatasetManager,
+    CacheError,
     CacheManager,
+    CacheStatus,
     DatasetInfo,
+    DatasetNotFoundError,
+    Domain,
     MetadataExtractor,
     TaskType,
-    Domain,
-    CacheStatus,
     UCIDatasetError,
-    CacheError,
-    DatasetNotFoundError,
+    UCIDatasetManager,
     ValidationError,
 )
-from dmdslab.datasets import ModelData
 
 
 class TestCacheManager:

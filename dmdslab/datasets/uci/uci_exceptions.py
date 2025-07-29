@@ -5,8 +5,9 @@
 используемые в функциональности загрузки датасетов UCI.
 """
 
-from typing import Optional, Any, Dict
-from dmdslab.datasets.uci.uci_types import DatasetID, CacheStatus
+from typing import Any, Dict, Optional
+
+from dmdslab.datasets.uci.uci_types import CacheStatus, DatasetID
 
 
 class UCIDatasetError(Exception):

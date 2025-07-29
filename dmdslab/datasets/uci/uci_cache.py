@@ -12,25 +12,24 @@ Functions:
     safe_pickle_load: Безопасная загрузка из pickle
 """
 
+import hashlib
 import json
+import logging
 import pickle
 import shutil
 import tempfile
-import hashlib
 import zipfile
-from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple, Union
 from datetime import datetime
-import logging
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+from dmdslab.datasets.uci.uci_exceptions import CacheError
 from dmdslab.datasets.uci.uci_types import (
-    DatasetID,
-    CacheStatus,
-    CachePath,
     DEFAULT_PICKLE_PROTOCOL,
     SUPPORTED_PICKLE_PROTOCOLS,
+    CacheStatus,
+    DatasetID,
 )
-from dmdslab.datasets.uci.uci_exceptions import CacheError
 from dmdslab.datasets.uci.uci_utils import format_cache_size, get_timestamp
 
 
@@ -68,7 +67,7 @@ def safe_pickle_dump(
             f"Ошибка сохранения в pickle: {e}",
             cache_path=str(file_path),
             details={"error": str(e), "error_type": type(e).__name__},
-        )
+        ) from e
 
 
 def safe_pickle_load(file_path: Path) -> Any:
@@ -111,13 +110,13 @@ def safe_pickle_load(file_path: Path) -> Any:
             cache_path=str(file_path),
             cache_status=CacheStatus.CORRUPTED,
             details={"error": str(e)},
-        )
+        ) from e
     except Exception as e:
         raise CacheError(
             f"Неожиданная ошибка при загрузке из pickle: {e}",
             cache_path=str(file_path),
             details={"error": str(e), "error_type": type(e).__name__},
-        )
+        ) from e
 
 
 class CacheManager:
@@ -201,7 +200,7 @@ class CacheManager:
                 f"Не удалось создать директорию кеша: {e}",
                 cache_path=str(cache_dir),
                 details={"error": str(e)},
-            )
+            ) from e
 
         # Проверяем доступность для записи
         if not self._check_cache_dir_writable():
@@ -227,7 +226,7 @@ class CacheManager:
             return {}
 
         try:
-            with open(self.index_path, "r", encoding="utf-8") as f:
+            with open(self.index_path, encoding="utf-8") as f:
                 index = json.load(f)
 
             # Валидация версии
@@ -380,7 +379,7 @@ class CacheManager:
                 dataset_id=dataset_id,
                 cache_path=str(cache_path),
                 details={"error": str(e)},
-            )
+            ) from e
 
     def load_dataset(self, dataset_id: DatasetID) -> Tuple[Any, Dict[str, Any]]:
         """Загрузка датасета из кеша.
@@ -422,7 +421,7 @@ class CacheManager:
                 dataset_id=dataset_id,
                 cache_path=str(cache_file),
                 details={"error": str(e)},
-            )
+            ) from e
 
     def _load_dataset_process(self, cache_file, cache_info, dataset_id):
         # Проверяем хеш файла
@@ -862,7 +861,7 @@ class CacheManager:
             raise CacheError(
                 f"Ошибка экспорта кеша: {e}",
                 details={"export_path": str(export_path), "error": str(e)},
-            )
+            ) from e
 
     def import_cache(self, import_path: Path, merge: bool = False) -> int:
         """Импорт кеша из архива.
@@ -893,7 +892,7 @@ class CacheManager:
                     # Загружаем индекс
                     temp_index_path = temp_path / "cache_index.json"
                     if temp_index_path.exists():
-                        with open(temp_index_path, "r", encoding="utf-8") as f:
+                        with open(temp_index_path, encoding="utf-8") as f:
                             imported_index = json.load(f)
 
                         # Копируем файлы и обновляем индекс
@@ -930,4 +929,4 @@ class CacheManager:
             raise CacheError(
                 f"Ошибка импорта кеша: {e}",
                 details={"import_path": str(import_path), "error": str(e)},
-            )
+            ) from e

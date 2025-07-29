@@ -15,20 +15,19 @@ from .ml_data_container import (
 )
 
 # Импорты из UCI модуля - если доступен
+from .uci import POPULAR_DATASETS as UCI_POPULAR_DATASETS
 from .uci import (
-    UCIDatasetManager,
-    load_dataset as load_uci_dataset,
-    load_datasets as load_uci_datasets,
-    load_by_name as load_uci_by_name,
-    clear_cache as clear_uci_cache,
-    get_cache_info as get_uci_cache_info,
-    POPULAR_DATASETS as UCI_POPULAR_DATASETS,
-    # Дополнительные классы
-    DatasetInfo,
     CacheManager,
+    DatasetInfo,
+    Domain,  # Дополнительные классы
     TaskType,
-    Domain,
+    UCIDatasetManager,
 )
+from .uci import clear_cache as clear_uci_cache
+from .uci import get_cache_info as get_uci_cache_info
+from .uci import load_by_name as load_uci_by_name
+from .uci import load_dataset as load_uci_dataset
+from .uci import load_datasets as load_uci_datasets
 
 _UCI_AVAILABLE = True
 

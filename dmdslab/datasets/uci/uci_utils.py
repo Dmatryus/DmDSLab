@@ -7,13 +7,13 @@
 - Вспомогательные функции для форматирования и валидации
 """
 
-import logging
 import functools
+import logging
 import time
-from pathlib import Path
-from typing import Optional, Union, Dict, Any, List, Callable, TypeVar, Tuple
 from contextlib import contextmanager
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, Union
 
 try:
     from tqdm.auto import tqdm
@@ -23,14 +23,7 @@ except ImportError:
 import numpy as np
 import pandas as pd
 
-from dmdslab.datasets.uci.uci_types import (
-    DatasetID,
-    LogLevel,
-    TaskType,
-    Domain,
-    MetadataDict,
-)
-
+from dmdslab.datasets.uci.uci_types import DatasetID, Domain, LogLevel, TaskType
 
 # Type variable для декораторов
 F = TypeVar("F", bound=Callable[..., Any])
@@ -362,7 +355,7 @@ def print_dataset_summary(
 
     # Информация о целевой переменной
     if target is not None:
-        print(f"\nЦелевая переменная:")
+        print("\nЦелевая переменная:")
         if isinstance(target, (pd.Series, np.ndarray)):
             unique_values = np.unique(target)
             if len(unique_values) <= 10:

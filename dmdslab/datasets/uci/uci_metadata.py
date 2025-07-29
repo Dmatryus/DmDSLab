@@ -5,28 +5,24 @@
 включая определение типов задач, категориальных признаков и статистики.
 """
 
-
 import contextlib
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Optional, List, Dict, Any, Tuple, Union
+from typing import Any, Dict, List, Optional
+
 import numpy as np
 import pandas as pd
-from collections import Counter
 
 from dmdslab.datasets.uci.uci_types import (
-    TaskType,
-    Domain,
-    DatasetID,
-    FeatureMatrix,
-    TargetVector,
     CategoricalIndices,
+    DatasetID,
+    Domain,
+    FeatureMatrix,
     FeatureNames,
     MetadataDict,
-    NUMERIC_DTYPES,
-    CATEGORICAL_DTYPES,
+    TargetVector,
+    TaskType,
 )
-from dmdslab.datasets.uci.uci_exceptions import ValidationError, DataFormatError
 
 
 @dataclass
@@ -386,7 +382,9 @@ class MetadataExtractor:
             if n_unique <= self.max_unique_for_categorical:
                 return True
 
-            if n_unique / n_total <= self.categorical_threshold and np.all(clean_array == clean_array.astype(int)):
+            if n_unique / n_total <= self.categorical_threshold and np.all(
+                clean_array == clean_array.astype(int)
+            ):
                 return True
 
         return False

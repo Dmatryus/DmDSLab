@@ -5,13 +5,12 @@
 весь процесс загрузки, кеширования и обработки датасетов из репозитория UCI.
 """
 
+import json
 import logging
 import pickle
-import json
-from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple, Union
-import warnings
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -22,39 +21,37 @@ except ImportError:
     raise ImportError(
         "Пакет ucimlrepo не установлен. "
         "Установите его командой: pip install ucimlrepo"
-    )
+    ) from None
 
-from dmdslab.datasets.uci.uci_types import (
-    DatasetID,
-    LogLevel,
-    TaskType,
-    FeatureMatrix,
-    TargetVector,
-    CategoricalIndices,
-    FeatureNames,
-    MetadataDict,
-    CacheStatus,
-    DEFAULT_PICKLE_PROTOCOL,
-)
 from dmdslab.datasets.uci.uci_exceptions import (
-    UCIDatasetError,
     CacheError,
+    DataFormatError,
     DatasetNotFoundError,
     NetworkError,
-    DataFormatError,
-    ValidationError,
+    UCIDatasetError,
 )
 from dmdslab.datasets.uci.uci_metadata import DatasetInfo, MetadataExtractor
+from dmdslab.datasets.uci.uci_types import (
+    DEFAULT_PICKLE_PROTOCOL,
+    CacheStatus,
+    CategoricalIndices,
+    DatasetID,
+    FeatureMatrix,
+    FeatureNames,
+    LogLevel,
+    MetadataDict,
+    TargetVector,
+    TaskType,
+)
 from dmdslab.datasets.uci.uci_utils import (
+    create_download_report,
+    create_progress_bar,
+    format_cache_size,
+    format_dataset_info,
+    get_timestamp,
+    progress_context,
     setup_logger,
     validate_dataset_id,
-    format_dataset_info,
-    print_dataset_summary,
-    create_progress_bar,
-    progress_context,
-    get_timestamp,
-    format_cache_size,
-    create_download_report,
 )
 
 # Импортируем ModelData из основного пакета
@@ -166,7 +163,7 @@ class UCIDatasetManager:
 
         if self.cache_index_path.exists():
             try:
-                with open(self.cache_index_path, "r", encoding="utf-8") as f:
+                with open(self.cache_index_path, encoding="utf-8") as f:
                     self.cache_index = json.load(f)
                 self.logger.debug("Индекс кеша успешно загружен")
             except Exception as e:
@@ -263,7 +260,7 @@ class UCIDatasetManager:
                 dataset_id=dataset_id,
                 cache_path=str(cache_file),
                 details={"error": str(e)},
-            )
+            ) from e
 
     def _save_to_cache(
         self, dataset_id: DatasetID, data: Dict[str, Any], metadata: MetadataDict
@@ -368,16 +365,16 @@ class UCIDatasetManager:
             if "Dataset not found" in str(e):
                 raise DatasetNotFoundError(
                     dataset_id=dataset_id, searched_locations=["UCI ML Repository"]
-                )
+                ) from e
             raise NetworkError(
                 f"Ошибка загрузки датасета {dataset_id}: {e}", dataset_id=dataset_id
-            )
+            ) from e
         except Exception as e:
             raise NetworkError(
                 f"Неожиданная ошибка при загрузке датасета {dataset_id}: {e}",
                 dataset_id=dataset_id,
                 details={"error_type": type(e).__name__},
-            )
+            ) from e
 
     def _analyze_structure(
         self, raw_data: Any
@@ -445,7 +442,7 @@ class UCIDatasetManager:
         except Exception as e:
             raise DataFormatError(
                 f"Ошибка анализа структуры данных: {e}", details={"error": str(e)}
-            )
+            ) from e
 
     def _detect_task_type(
         self,
@@ -509,11 +506,6 @@ class UCIDatasetManager:
         """
         # Определяем тип задачи
         task_type = self._detect_task_type(features, target, metadata)
-
-        # Определяем категориальные признаки
-        categorical_features = self._detect_categorical_features(
-            features, feature_names
-        )
 
         # Подготавливаем данные для ModelData
         if isinstance(features, pd.DataFrame):
@@ -646,7 +638,7 @@ class UCIDatasetManager:
                 f"Неожиданная ошибка при загрузке датасета {dataset_id}: {e}",
                 dataset_id=dataset_id,
                 details={"error_type": type(e).__name__, "error": str(e)},
-            )
+            ) from e
 
     def load_datasets(
         self,
@@ -680,7 +672,7 @@ class UCIDatasetManager:
             disable=not self.show_progress,
         ) as pbar:
 
-            for i, dataset_id in enumerate(dataset_ids):
+            for dataset_id in dataset_ids:
                 pbar.set_description(f"Загрузка датасета {dataset_id}")
 
                 try:

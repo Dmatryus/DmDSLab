@@ -5,31 +5,32 @@
 используемые в функциональности загрузки датасетов UCI.
 """
 
-from enum import Enum, auto
-from typing import TypeVar, Union, List, Dict, Any, Optional, Tuple
+from enum import Enum
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
+
 import numpy as np
 import pandas as pd
 
 
 class TaskType(Enum):
     """Перечисление типов задач машинного обучения."""
-    
+
     CLASSIFICATION = "classification"
     REGRESSION = "regression"
     CLUSTERING = "clustering"
     UNKNOWN = "unknown"
-    
+
     @classmethod
     def from_string(cls, value: str) -> "TaskType":
         """Создать TaskType из строкового значения.
-        
+
         Args:
             value: Строковое представление типа задачи
-            
+
         Returns:
             Значение перечисления TaskType
-            
+
         Raises:
             ValueError: Если значение не является допустимым типом задачи
         """
@@ -38,14 +39,14 @@ class TaskType(Enum):
             if task_type.value == value_lower:
                 return task_type
         raise ValueError(f"Неизвестный тип задачи: {value}")
-    
+
     def __str__(self) -> str:
         return self.value
 
 
 class Domain(Enum):
     """Перечисление доменов датасетов."""
-    
+
     BUSINESS = "business"
     COMPUTER = "computer"
     ENGINEERING = "engineering"
@@ -54,17 +55,17 @@ class Domain(Enum):
     PHYSICAL = "physical"
     SOCIAL = "social"
     OTHER = "other"
-    
+
     @classmethod
     def from_string(cls, value: str) -> "Domain":
         """Создать Domain из строкового значения.
-        
+
         Args:
             value: Строковое представление домена
-            
+
         Returns:
             Значение перечисления Domain
-            
+
         Raises:
             ValueError: Если значение не является допустимым доменом
         """
@@ -72,37 +73,38 @@ class Domain(Enum):
         return next(
             (domain for domain in cls if domain.value == value_lower), cls.OTHER
         )
-    
+
     def __str__(self) -> str:
         return self.value
 
 
 class CacheStatus(Enum):
     """Перечисление статусов кеша."""
-    
+
     HIT = "hit"  # Данные найдены в кеше
     MISS = "miss"  # Данные отсутствуют в кеше
     STALE = "stale"  # Данные в кеше устарели
     CORRUPTED = "corrupted"  # Файл кеша поврежден
-    
+
     def __str__(self) -> str:
         return self.value
 
 
 class LogLevel(Enum):
     """Перечисление уровней логирования."""
-    
+
     DEBUG = "DEBUG"
     INFO = "INFO"
     WARNING = "WARNING"
     ERROR = "ERROR"
-    
+
     @property
     def numeric_level(self) -> int:
         """Получить числовой уровень логирования для модуля logging Python."""
         import logging
+
         return getattr(logging, self.value)
-    
+
     def __str__(self) -> str:
         return self.value
 
@@ -116,11 +118,13 @@ FeatureNames = List[str]  # Имена признаков
 MetadataDict = Dict[str, Any]  # Словарь метаданных
 
 # Переменные типов для обобщенных типов
-T = TypeVar('T')
-DataType = TypeVar('DataType', np.ndarray, pd.DataFrame, pd.Series)
+T = TypeVar("T")
+DataType = TypeVar("DataType", np.ndarray, pd.DataFrame, pd.Series)
 
 # Структурированные типы для сложных данных
-CacheEntry = Dict[str, Any]  # Структура: {'data': Any, 'metadata': Dict, 'timestamp': float}
+CacheEntry = Dict[
+    str, Any
+]  # Структура: {'data': Any, 'metadata': Dict, 'timestamp': float}
 ValidationResult = Tuple[bool, List[str]]  # (is_valid, error_messages)
 ProgressCallback = Optional[callable]  # Обратный вызов для обновления прогресса
 
@@ -128,10 +132,11 @@ ProgressCallback = Optional[callable]  # Обратный вызов для об
 CachePath = Union[str, Path]
 DatasetPath = Union[str, Path]
 
+
 # Типы структуры датасета
 class DatasetStructure:
     """Подсказки типов для компонентов структуры датасета."""
-    
+
     Features = FeatureMatrix
     Target = Optional[TargetVector]
     FeatureNames = Optional[FeatureNames]

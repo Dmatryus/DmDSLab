@@ -17,23 +17,20 @@
 from dmdslab.datasets.ml_data_container import ModelData
 
 # Импорт UCI загрузчика
-from dmdslab.datasets.uci import (
-    UCIDatasetManager,
-    load_dataset as load_uci_dataset,
-    load_datasets as load_uci_datasets,
-    load_by_name as load_uci_by_name,
-    clear_cache as clear_uci_cache,
-    get_cache_info as get_uci_cache_info,
-    POPULAR_DATASETS as UCI_POPULAR_DATASETS,
-)
-
 # Реэкспорт основных классов для удобства
+from dmdslab.datasets.uci import POPULAR_DATASETS as UCI_POPULAR_DATASETS
 from dmdslab.datasets.uci import (
-    DatasetInfo,
     CacheManager,
-    TaskType,
+    DatasetInfo,
     Domain,
+    TaskType,
+    UCIDatasetManager,
 )
+from dmdslab.datasets.uci import clear_cache as clear_uci_cache
+from dmdslab.datasets.uci import get_cache_info as get_uci_cache_info
+from dmdslab.datasets.uci import load_by_name as load_uci_by_name
+from dmdslab.datasets.uci import load_dataset as load_uci_dataset
+from dmdslab.datasets.uci import load_datasets as load_uci_datasets
 
 # Версия модуля datasets
 __version__ = "2.0.0"

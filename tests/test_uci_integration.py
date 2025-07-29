@@ -2,32 +2,31 @@
 Тестируют функции быстрой загрузки и API верхнего уровня с реальными данными.
 """
 
-import tempfile
-import shutil
-import pickle
 import json
-from pathlib import Path
 import logging
 import os
-from typing import Dict, Any
+import pickle
+import shutil
+import tempfile
+from pathlib import Path
+from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from dmdslab.datasets import ModelData
+from dmdslab.datasets.uci import UCILoader  # Алиас
 from dmdslab.datasets.uci import (
-    load_dataset,
-    load_datasets,
-    load_by_name,
+    POPULAR_DATASETS,
+    CacheManager,
+    UCIDatasetManager,
     clear_cache,
     get_cache_info,
-    POPULAR_DATASETS,
-    UCIDatasetManager,
-    UCILoader,  # Алиас
-    CacheManager,
+    load_by_name,
+    load_dataset,
+    load_datasets,
 )
-from dmdslab.datasets import ModelData
-
 
 # Вспомогательные функции для создания тестовых данных
 
@@ -64,7 +63,8 @@ def create_cached_dataset(
     """Создание кешированного датасета для тестов."""
     import json
     import pickle
-    from dmdslab.datasets.uci.uci_utils import get_timestamp, format_cache_size
+
+    from dmdslab.datasets.uci.uci_utils import format_cache_size, get_timestamp
 
     # Создаем имя файла
     timestamp = get_timestamp()
@@ -315,12 +315,12 @@ class TestModuleImports:
     def test_main_imports(self):
         """Тест основных импортов из dmdslab.datasets.uci."""
         from dmdslab.datasets.uci import (
-            UCIDatasetManager,
             CacheManager,
             DatasetInfo,
-            TaskType,
             Domain,
+            TaskType,
             UCIDatasetError,
+            UCIDatasetManager,
         )
 
         # Проверяем, что все импортировалось
@@ -339,12 +339,12 @@ class TestModuleImports:
         """Тест импортов из основного модуля datasets."""
         # Эти функции должны быть доступны через основной __init__
         from dmdslab.datasets import (
-            load_uci_dataset,
-            load_uci_datasets,
-            load_uci_by_name,
+            UCI_POPULAR_DATASETS,
             clear_uci_cache,
             get_uci_cache_info,
-            UCI_POPULAR_DATASETS,
+            load_uci_by_name,
+            load_uci_dataset,
+            load_uci_datasets,
         )
 
         # Проверяем, что импортировалось

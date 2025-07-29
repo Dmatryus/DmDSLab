@@ -41,50 +41,49 @@ __version__ = "2.0.0"
 
 
 # Импорт основных классов
-from dmdslab.datasets.uci.uci_manager import UCIDatasetManager
 from dmdslab.datasets.uci.uci_cache import (
     CacheManager,
     safe_pickle_dump,
     safe_pickle_load,
 )
+
+# Импорт исключений
+from dmdslab.datasets.uci.uci_exceptions import (
+    CacheError,
+    ConfigurationError,
+    DataFormatError,
+    DatasetNotFoundError,
+    NetworkError,
+    UCIDatasetError,
+    ValidationError,
+)
+from dmdslab.datasets.uci.uci_manager import UCIDatasetManager
 from dmdslab.datasets.uci.uci_metadata import DatasetInfo, MetadataExtractor
 
 # Импорт типов
 from dmdslab.datasets.uci.uci_types import (
-    TaskType,
-    Domain,
     CacheStatus,
-    LogLevel,
-    DatasetID,
-    FeatureMatrix,
-    TargetVector,
     CategoricalIndices,
+    DatasetID,
+    Domain,
+    FeatureMatrix,
     FeatureNames,
+    LogLevel,
     MetadataDict,
-)
-
-# Импорт исключений
-from dmdslab.datasets.uci.uci_exceptions import (
-    UCIDatasetError,
-    CacheError,
-    DatasetNotFoundError,
-    NetworkError,
-    DataFormatError,
-    ValidationError,
-    ConfigurationError,
+    TargetVector,
+    TaskType,
 )
 
 # Импорт утилит
 from dmdslab.datasets.uci.uci_utils import (
+    create_progress_bar,
+    format_cache_size,
+    format_dataset_info,
+    get_popular_datasets,
+    print_dataset_summary,
     setup_logger,
     validate_dataset_id,
-    format_dataset_info,
-    print_dataset_summary,
-    create_progress_bar,
-    get_popular_datasets,
-    format_cache_size,
 )
-
 
 # Удобные алиасы для обратной совместимости
 UCILoader = UCIDatasetManager  # Альтернативное имя
@@ -96,7 +95,7 @@ def load_dataset(
     use_cache: bool = True,
     force_reload: bool = False,
     show_progress: bool = True,
-) -> "ModelData":
+):
     """Быстрая функция для загрузки одного датасета.
 
     Удобная обертка для одноразовой загрузки без создания менеджера.
@@ -205,7 +204,7 @@ POPULAR_DATASETS = {
 }
 
 
-def load_by_name(name: str, **kwargs) -> "ModelData":
+def load_by_name(name: str, **kwargs):
     """Загрузка популярного датасета по имени.
 
     Args:

@@ -2,27 +2,27 @@
 Тесты для исключений и типов UCI Dataset Loader.
 """
 
-
 import contextlib
+
 import pytest
 
-from dmdslab.datasets.uci.uci_types import (
-    TaskType,
-    Domain,
-    CacheStatus,
-    LogLevel,
-    DatasetID,
-    DEFAULT_PICKLE_PROTOCOL,
-    SUPPORTED_PICKLE_PROTOCOLS,
-)
 from dmdslab.datasets.uci.uci_exceptions import (
-    UCIDatasetError,
     CacheError,
+    ConfigurationError,
+    DataFormatError,
     DatasetNotFoundError,
     NetworkError,
-    DataFormatError,
+    UCIDatasetError,
     ValidationError,
-    ConfigurationError,
+)
+from dmdslab.datasets.uci.uci_types import (
+    DEFAULT_PICKLE_PROTOCOL,
+    SUPPORTED_PICKLE_PROTOCOLS,
+    CacheStatus,
+    DatasetID,
+    Domain,
+    LogLevel,
+    TaskType,
 )
 
 
@@ -41,7 +41,7 @@ class TestTaskType:
         assert TaskType.from_string("classification") == TaskType.CLASSIFICATION
         assert TaskType.from_string("CLASSIFICATION") == TaskType.CLASSIFICATION
         assert TaskType.from_string(" Classification ") == TaskType.CLASSIFICATION
-        
+
         assert TaskType.from_string("regression") == TaskType.REGRESSION
         assert TaskType.from_string("clustering") == TaskType.CLUSTERING
         assert TaskType.from_string("unknown") == TaskType.UNKNOWN
@@ -117,7 +117,7 @@ class TestLogLevel:
     def test_numeric_level(self):
         """Тест получения числового уровня."""
         import logging
-        
+
         assert LogLevel.DEBUG.numeric_level == logging.DEBUG
         assert LogLevel.INFO.numeric_level == logging.INFO
         assert LogLevel.WARNING.numeric_level == logging.WARNING
@@ -145,7 +145,7 @@ class TestUCIDatasetError:
     def test_basic_exception(self):
         """Тест базового исключения."""
         error = UCIDatasetError("Test error")
-        
+
         assert str(error) == "Test error"
         assert error.message == "Test error"
         assert error.dataset_id is None
@@ -155,7 +155,7 @@ class TestUCIDatasetError:
     def test_exception_with_dataset_id(self):
         """Тест исключения с ID датасета."""
         error = UCIDatasetError("Error loading", dataset_id=53)
-        
+
         assert "Dataset ID: 53" in str(error)
         assert error.dataset_id == 53
 
@@ -163,7 +163,7 @@ class TestUCIDatasetError:
         """Тест исключения с деталями."""
         details = {"url": "http://example.com", "status": 404}
         error = UCIDatasetError("Network error", details=details)
-        
+
         assert "Details:" in str(error)
         assert "url=http://example.com" in str(error)
         assert "status=404" in str(error)
@@ -172,7 +172,7 @@ class TestUCIDatasetError:
         """Тест repr представления."""
         error = UCIDatasetError("Test", dataset_id=1, error_type="TestError")
         repr_str = repr(error)
-        
+
         assert "UCIDatasetError" in repr_str
         assert "message='Test'" in repr_str
         assert "dataset_id=1" in repr_str
@@ -185,7 +185,7 @@ class TestCacheError:
     def test_cache_error_basic(self):
         """Тест базового CacheError."""
         error = CacheError("Cache write failed")
-        
+
         assert error.message == "Cache write failed"
         assert error.error_type == "CacheError"
 
@@ -195,9 +195,9 @@ class TestCacheError:
             "Cache miss",
             dataset_id=53,
             cache_status=CacheStatus.MISS,
-            cache_path="/path/to/cache"
+            cache_path="/path/to/cache",
         )
-        
+
         assert error.cache_status == CacheStatus.MISS
         assert error.cache_path == "/path/to/cache"
         assert error.details["cache_status"] == "miss"
@@ -210,7 +210,7 @@ class TestValidationError:
     def test_validation_error_basic(self):
         """Тест базового ValidationError."""
         error = ValidationError("Invalid data format")
-        
+
         assert error.message == "Invalid data format"
         assert error.error_type == "ValidationError"
 
@@ -220,9 +220,9 @@ class TestValidationError:
             "Invalid value",
             field_name="age",
             invalid_value=-5,
-            expected_type="positive integer"
+            expected_type="positive integer",
         )
-        
+
         assert error.field_name == "age"
         assert error.invalid_value == -5
         assert error.expected_type == "positive integer"
@@ -237,27 +237,21 @@ class TestDatasetNotFoundError:
     def test_dataset_not_found_basic(self):
         """Тест базового DatasetNotFoundError."""
         error = DatasetNotFoundError(dataset_id=999)
-        
+
         assert "Датасет с ID '999' не найден" in error.message
         assert error.dataset_id == 999
 
     def test_dataset_not_found_custom_message(self):
         """Тест с кастомным сообщением."""
-        error = DatasetNotFoundError(
-            dataset_id=999,
-            message="Custom error message"
-        )
-        
+        error = DatasetNotFoundError(dataset_id=999, message="Custom error message")
+
         assert error.message == "Custom error message"
 
     def test_dataset_not_found_with_locations(self):
         """Тест с местами поиска."""
         locations = ["cache", "UCI repository", "backup server"]
-        error = DatasetNotFoundError(
-            dataset_id=999,
-            searched_locations=locations
-        )
-        
+        error = DatasetNotFoundError(dataset_id=999, searched_locations=locations)
+
         assert error.searched_locations == locations
         assert error.details["searched_locations"] == locations
 
@@ -268,7 +262,7 @@ class TestNetworkError:
     def test_network_error_basic(self):
         """Тест базового NetworkError."""
         error = NetworkError("Connection timeout")
-        
+
         assert error.message == "Connection timeout"
         assert error.error_type == "NetworkError"
 
@@ -279,9 +273,9 @@ class TestNetworkError:
             dataset_id=53,
             url="http://archive.ics.uci.edu/ml/...",
             status_code=503,
-            retry_count=3
+            retry_count=3,
         )
-        
+
         assert error.url == "http://archive.ics.uci.edu/ml/..."
         assert error.status_code == 503
         assert error.retry_count == 3
@@ -294,7 +288,7 @@ class TestDataFormatError:
     def test_data_format_error_basic(self):
         """Тест базового DataFormatError."""
         error = DataFormatError("Unexpected data structure")
-        
+
         assert error.message == "Unexpected data structure"
         assert error.error_type == "DataFormatError"
 
@@ -304,9 +298,9 @@ class TestDataFormatError:
             "Format mismatch",
             dataset_id=53,
             expected_format="CSV",
-            actual_format="ARFF"
+            actual_format="ARFF",
         )
-        
+
         assert error.expected_format == "CSV"
         assert error.actual_format == "ARFF"
         assert error.details["expected_format"] == "CSV"
@@ -319,7 +313,7 @@ class TestConfigurationError:
     def test_configuration_error_basic(self):
         """Тест базового ConfigurationError."""
         error = ConfigurationError("Invalid configuration")
-        
+
         assert error.message == "Invalid configuration"
         assert error.error_type == "ConfigurationError"
 
@@ -329,9 +323,9 @@ class TestConfigurationError:
             "Invalid parameter value",
             parameter_name="cache_size",
             parameter_value=-100,
-            valid_values=["positive integer", "> 0"]
+            valid_values=["positive integer", "> 0"],
         )
-        
+
         assert error.parameter_name == "cache_size"
         assert error.parameter_value == -100
         assert error.valid_values == ["positive integer", "> 0"]
@@ -351,7 +345,7 @@ class TestExceptionHierarchy:
         assert issubclass(NetworkError, UCIDatasetError)
         assert issubclass(DataFormatError, UCIDatasetError)
         assert issubclass(ConfigurationError, UCIDatasetError)
-        
+
         # UCIDatasetError наследуется от Exception
         assert issubclass(UCIDatasetError, Exception)
 

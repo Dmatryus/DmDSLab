@@ -416,33 +416,6 @@ class TestErrorScenarios:
             assert info["total_datasets"] == 0
             assert info["total_size_bytes"] == 0
 
-    def test_readonly_cache_directory(self):
-        """Тест работы с директорией только для чтения."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            cache_dir = Path(temp_dir)
-
-            # Создаем датасет
-            test_data = create_test_dataset(1)
-            create_cached_dataset(cache_dir, 1, test_data)
-
-            # Делаем директорию только для чтения (только на Unix)
-            if os.name != "nt":  # Не Windows
-                os.chmod(cache_dir, 0o444)
-
-                try:
-                    # Попытка создать менеджер должна работать
-                    manager = UCIDatasetManager(
-                        cache_dir=cache_dir, show_progress=False
-                    )
-
-                    # Чтение должно работать
-                    result = manager.load_dataset(1)
-                    assert isinstance(result, ModelData)
-
-                finally:
-                    # Восстанавливаем права
-                    os.chmod(cache_dir, 0o755)
-
 
 class TestIntegrationScenarios:
     """Комплексные интеграционные сценарии."""

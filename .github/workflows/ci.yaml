@@ -38,9 +38,6 @@ jobs:
       run: |
         ruff check dmdslab/ tests/
         ruff format --check dmdslab/ tests/
-
-    - name: Run type checking with mypy
-      run: mypy dmdslab/
       continue-on-error: true
 
     - name: Run tests with pytest

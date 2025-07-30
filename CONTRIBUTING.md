@@ -40,6 +40,9 @@
 git clone https://github.com/YOUR_USERNAME/DmDSLab.git
 cd DmDSLab
 
+# Проверьте версию Python (требуется 3.11+)
+python --version
+
 # Создайте виртуальное окружение
 python -m venv venv
 source venv/bin/activate  # Linux/Mac

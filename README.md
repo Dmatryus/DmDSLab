@@ -1,7 +1,7 @@
 # DmDSLab: Data Science Toolkit
 
 [![PyPI version](https://badge.fury.io/py/DmDSLab.svg)](https://badge.fury.io/py/DmDSLab)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Downloads](https://pepy.tech/badge/dmdslab)](https://pepy.tech/project/dmdslab)
 
@@ -32,6 +32,12 @@
 - **K-fold**: Встроенная поддержка кросс-валидации
 
 ## 📦 Установка
+**Требования**: Python 3.11 или выше
+
+```bash
+# Проверьте версию Python
+python --version  # Должно быть 3.11.x или 3.12.x
+```
 
 ```bash
 # Базовая установка

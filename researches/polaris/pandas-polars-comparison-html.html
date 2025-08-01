@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pandas vs Polars: Детальное сравнение производительности 2024-2025</title>
+    <title>Pandas vs Polars: Полное сравнение производительности и интеграция с ML (2024-2025)</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -200,7 +200,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>Pandas vs Polars: Детальное сравнение производительности работы с данными</h1>
+        <h1>Pandas vs Polars: Детальное сравнение производительности и использование в машинном обучении</h1>
         
         <div class="key-takeaways">
             <h3>Ключевые выводы исследования</h3>
@@ -209,6 +209,8 @@
                 <li><strong>Скорость выполнения операций в 2-30 раз выше</strong> в зависимости от типа операций</li>
                 <li><strong>PyArrow backend в pandas 2.0+</strong> улучшает работу со строками, но часто показывает худшую производительность для численных операций</li>
                 <li><strong>Архитектурные преимущества Polars</strong> (lazy evaluation, нативный параллелизм, query optimization) обеспечивают устойчивое превосходство</li>
+                <li><strong>Интеграция с ML улучшается</strong> - scikit-learn 1.4+ поддерживает Polars, XGBoost и LightGBM работают напрямую</li>
+                <li><strong>Гибридный подход оптимален</strong> - использовать Polars для предобработки, конвертировать только для финальной модели</li>
             </ul>
         </div>
 
@@ -296,8 +298,36 @@
                     <td class="worst-value">Требует Dask</td>
                     <td class="best-value">Встроенная</td>
                 </tr>
+                <tr>
+                    <td class="metric-name">Поддержка scikit-learn</td>
+                    <td class="best-value">Полная</td>
+                    <td class="neutral-value">Ограниченная</td>
+                    <td class="neutral-value">С версии 1.4</td>
+                </tr>
+                <tr>
+                    <td class="metric-name">XGBoost/LightGBM/CatBoost</td>
+                    <td class="best-value">Полная</td>
+                    <td class="best-value">Полная</td>
+                    <td class="best-value">Нативная*</td>
+                </tr>
+                <tr>
+                    <td class="metric-name">PyTorch/TensorFlow</td>
+                    <td class="best-value">Через NumPy</td>
+                    <td class="neutral-value">Через NumPy</td>
+                    <td class="best-value">Прямая конвертация</td>
+                </tr>
+                <tr>
+                    <td class="metric-name">Необходимость конвертации для ML</td>
+                    <td class="best-value">Редко</td>
+                    <td class="neutral-value">Иногда</td>
+                    <td class="worst-value">Часто</td>
+                </tr>
             </tbody>
         </table>
+        
+        <div class="note">
+            <strong>* Примечание:</strong> XGBoost и LightGBM имеют нативную поддержку Polars, но CatBoost пока требует конвертации через <code>.to_pandas()</code> или <code>.to_numpy()</code>
+        </div>
 
         <h2>Детальный анализ производительности</h2>
 
@@ -412,6 +442,260 @@ result = (
     .collect()
 )</code></pre>
 
+        <h2>Использование Polars в машинном обучении</h2>
+
+        <div class="note">
+            <strong>Важно:</strong> С выходом scikit-learn 1.4.0 (январь 2024) добавлена официальная поддержка Polars DataFrame в трансформерах и ColumnTransformer!
+        </div>
+
+        <h3>Текущее состояние интеграции с ML библиотеками</h3>
+
+        <h4>✅ Полная поддержка:</h4>
+        <ul>
+            <li><strong>scikit-learn 1.4+</strong> - трансформеры поддерживают вывод в формате Polars через <code>set_output(transform="polars")</code></li>
+            <li><strong>XGBoost</strong> - принимает Polars DataFrame и LazyFrame напрямую</li>
+            <li><strong>LightGBM</strong> - принимает Polars DataFrame как входные данные</li>
+            <li><strong>PyTorch</strong> - конвертация через <code>to_torch()</code> с версии 0.20.23</li>
+            <li><strong>JAX</strong> - конвертация через <code>to_jax()</code></li>
+            <li><strong>Nixtla</strong> - библиотеки для прогнозирования временных рядов</li>
+        </ul>
+
+        <h4>⚠️ Частичная поддержка:</h4>
+        <ul>
+            <li><strong>CatBoost</strong> - не поддерживает Polars напрямую, требуется конвертация через <code>.to_pandas()</code> или <code>.to_numpy()</code> (есть открытые запросы на GitHub #2524, #2699)</li>
+            <li>Не все модели scikit-learn поддерживают Polars (например, некоторые препроцессоры)</li>
+            <li>Внутреннее копирование данных в NumPy может происходить даже при прямой поддержке</li>
+            <li>OneHotEncoder и SimpleImputer могут не работать с Polars напрямую</li>
+        </ul>
+
+        <h3>Основные ограничения и их решения</h3>
+
+        <table class="comparison-table">
+            <thead>
+                <tr>
+                    <th>Проблема</th>
+                    <th>Причина</th>
+                    <th>Решение</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="metric-name">Ошибки типов в scikit-learn</td>
+                    <td>Многие функции ожидают NumPy массивы или pandas DataFrame</td>
+                    <td>Использовать <code>.to_numpy()</code> или <code>.to_pandas()</code></td>
+                </tr>
+                <tr>
+                    <td class="metric-name">Отсутствие индексов</td>
+                    <td>Polars не использует концепцию индексов как pandas</td>
+                    <td>Добавить колонку с индексами явно если необходимо</td>
+                </tr>
+                <tr>
+                    <td class="metric-name">Несовместимость с визуализацией</td>
+                    <td>Matplotlib/Seaborn ожидают pandas DataFrame</td>
+                    <td>Конвертировать для визуализации: <code>df.to_pandas()</code></td>
+                </tr>
+                <tr>
+                    <td class="metric-name">Потеря производительности при конвертации</td>
+                    <td>Копирование данных между форматами</td>
+                    <td>Минимизировать конвертации, делать их в конце pipeline</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>Практические примеры интеграции</h3>
+
+        <h4>1. Использование с scikit-learn 1.4+</h4>
+        <pre><code>import polars as pl
+from sklearn.preprocessing import StandardScaler, OrdinalEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LogisticRegression
+
+# Создаем Polars DataFrame
+df = pl.DataFrame({
+    "numeric_feature": [1.0, 2.0, 3.0, 4.0],
+    "categorical_feature": ["A", "B", "A", "C"],
+    "target": [0, 1, 0, 1]
+})
+
+# Настраиваем ColumnTransformer с поддержкой Polars
+preprocessor = ColumnTransformer(
+    transformers=[
+        ("num", StandardScaler(), ["numeric_feature"]),
+        ("cat", OrdinalEncoder(), ["categorical_feature"])
+    ]
+)
+
+# Включаем вывод в формате Polars
+preprocessor.set_output(transform="polars")
+
+# Создаем pipeline
+pipeline = Pipeline([
+    ("preprocessor", preprocessor),
+    ("classifier", LogisticRegression())
+])
+
+# Обучение - автоматическая конвертация в NumPy для модели
+X = df.select(["numeric_feature", "categorical_feature"])
+y = df["target"].to_numpy()
+pipeline.fit(X, y)</code></pre>
+
+        <h4>2. Прямое использование с XGBoost</h4>
+        <pre><code>import polars as pl
+import xgboost as xgb
+
+# Polars DataFrame работает напрямую
+df = pl.read_csv("data.csv")
+X = df.select(pl.all().exclude("target"))
+y = df["target"]
+
+# XGBoost принимает Polars напрямую!
+model = xgb.XGBClassifier()
+model.fit(X, y)
+
+# Предсказание также работает с Polars
+predictions = model.predict(X)</code></pre>
+
+        <h4>3. Использование с CatBoost (требуется конвертация)</h4>
+        <pre><code>import polars as pl
+import catboost as cb
+
+# Загружаем данные в Polars
+df = pl.read_csv("data.csv")
+X = df.select(pl.all().exclude("target"))
+y = df["target"]
+
+# CatBoost НЕ поддерживает Polars напрямую
+# Необходима конвертация в pandas или numpy
+X_pandas = X.to_pandas()
+y_numpy = y.to_numpy()
+
+# Создаем Pool для эффективной работы с CatBoost
+pool = cb.Pool(
+    data=X_pandas,
+    label=y_numpy,
+    cat_features=['category_col1', 'category_col2']  # укажите категориальные признаки
+)
+
+# Обучение модели
+model = cb.CatBoostClassifier(iterations=100, verbose=False)
+model.fit(pool)
+
+# Для предсказания также нужна конвертация
+X_test_pandas = X_test.to_pandas()
+predictions = model.predict(X_test_pandas)</code></pre>
+
+        <h4>4. Конвертация в PyTorch</h4>
+        <pre><code># Конвертация в PyTorch Tensor
+tensor = df.to_torch()
+
+# Создание PyTorch Dataset с разделением на features и labels
+dataset = df.to_torch(
+    return_type="dataset",
+    label="target",
+    dtype=pl.Float32
+)
+
+# Использование с DataLoader
+from torch.utils.data import DataLoader
+dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+# Обучение модели
+for batch_features, batch_labels in dataloader:
+    # Ваш код обучения
+    pass</code></pre>
+
+        <h4>5. Создание кастомного трансформера для Polars</h4>
+        <pre><code>from sklearn.base import BaseEstimator, TransformerMixin
+import polars as pl
+
+class PolarsGroupStandardizer(BaseEstimator, TransformerMixin):
+    """Стандартизация по группам с сохранением Polars DataFrame"""
+    
+    def __init__(self, group_col, numeric_cols):
+        self.group_col = group_col
+        self.numeric_cols = numeric_cols
+    
+    def fit(self, X, y=None):
+        # Polars не требует предварительного обучения для группировки
+        return self
+    
+    def transform(self, X):
+        # Конвертируем в Polars если необходимо
+        if not isinstance(X, pl.DataFrame):
+            X = pl.DataFrame(X)
+        
+        # Применяем стандартизацию по группам
+        return X.with_columns([
+            ((pl.col(col) - pl.col(col).mean().over(self.group_col)) / 
+             pl.col(col).std().over(self.group_col))
+            .alias(col)
+            for col in self.numeric_cols
+        ])
+
+# Использование в pipeline
+custom_transformer = PolarsGroupStandardizer(
+    group_col="country",
+    numeric_cols=["revenue", "cost"]
+)</code></pre>
+
+        <h3>Лучшие практики для ML с Polars</h3>
+
+        <div class="key-takeaways">
+            <h4>Рекомендации по оптимальному использованию:</h4>
+            <ol>
+                <li><strong>Максимально используйте Polars для предобработки</strong> - фильтрация, агрегация, feature engineering</li>
+                <li><strong>Конвертируйте в NumPy только перед обучением модели</strong> - минимизируйте накладные расходы</li>
+                <li><strong>Используйте lazy evaluation</strong> для оптимизации памяти при работе с большими датасетами</li>
+                <li><strong>Предпочитайте библиотеки с нативной поддержкой</strong> - XGBoost, LightGBM, новые версии scikit-learn</li>
+                <li><strong>Создавайте переиспользуемые компоненты</strong> - кастомные трансформеры для типовых операций</li>
+            </ol>
+        </div>
+
+        <h3>Гибридный подход: лучшее из двух миров</h3>
+
+        <pre><code># Оптимальный pipeline для ML проектов
+import polars as pl
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+
+# 1. Загрузка и предобработка в Polars (быстро и эффективно)
+df = (
+    pl.scan_csv("large_dataset.csv")  # Lazy чтение
+    .filter(pl.col("value") > 0)      # Фильтрация
+    .with_columns([                    # Feature engineering
+        (pl.col("date").str.strptime(pl.Date)).alias("date_parsed"),
+        (pl.col("amount") / pl.col("quantity")).alias("unit_price")
+    ])
+    .group_by("customer_id")          # Агрегация
+    .agg([
+        pl.col("amount").sum().alias("total_amount"),
+        pl.col("quantity").mean().alias("avg_quantity")
+    ])
+    .collect()                         # Материализация
+)
+
+# 2. Подготовка данных для ML (конвертация только когда необходимо)
+X = df.select(pl.all().exclude("target")).to_numpy()
+y = df["target"].to_numpy()
+
+# 3. Стандартный ML pipeline
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+model = RandomForestClassifier()
+model.fit(X_train, y_train)
+
+# 4. Результаты обратно в Polars для анализа
+predictions = model.predict(X_test)
+results_df = pl.DataFrame({
+    "actual": y_test,
+    "predicted": predictions
+})
+
+# Анализ результатов в Polars
+accuracy = results_df.filter(
+    pl.col("actual") == pl.col("predicted")
+).shape[0] / results_df.shape[0]</code></pre>
+
         <h2>Будущее развитие</h2>
 
         <p><strong>Pandas 3.0</strong> планирует сделать PyArrow backend основным, что должно улучшить производительность и совместимость. Однако фундаментальные архитектурные ограничения (отсутствие lazy evaluation и query optimization) останутся.</p>
@@ -420,8 +704,16 @@ result = (
         <ul>
             <li>GPU ускорение через NVIDIA RAPIDS</li>
             <li>Улучшенный streaming engine для сверхбольших данных</li>
-            <li>Расширение экосистемы (поддержка в XGBoost, LightGBM, DuckDB)</li>
+            <li>Расширение экосистемы (полная интеграция с ML библиотеками)</li>
             <li>Polars Cloud для распределенной обработки</li>
+            <li>Нативная поддержка в большем количестве ML фреймворков</li>
+        </ul>
+
+        <p><strong>Экосистема ML</strong> постепенно адаптируется к Polars:</p>
+        <ul>
+            <li>Растущее число библиотек добавляет прямую поддержку</li>
+            <li>Стандартизация через Apache Arrow упрощает интеграцию</li>
+            <li>Сообщество создает специализированные инструменты (polars-distance, polars-ml)</li>
         </ul>
 
         <div class="source-reference">
@@ -442,6 +734,17 @@ result = (
                 <li><a href="https://docs.pola.rs/user-guide/migration/pandas/" target="_blank">Polars: Migration Guide from Pandas</a></li>
                 <li><a href="https://datapythonista.me/blog/pandas-20-and-the-arrow-revolution-part-i" target="_blank">The Arrow Revolution in Pandas 2.0</a></li>
                 <li><a href="https://stackoverflow.com/questions/77169878/" target="_blank">Stack Overflow: Polars vs Pandas 2 performance discussions</a></li>
+                <li><a href="https://docs.pola.rs/user-guide/ecosystem/" target="_blank">Polars Ecosystem: ML integrations</a></li>
+                <li><a href="https://scikit-learn.org/stable/modules/generated/sklearn.compose.ColumnTransformer.html" target="_blank">scikit-learn: ColumnTransformer with Polars support</a></li>
+                <li><a href="https://docs.pola.rs/py-polars/html/reference/dataframe/api/polars.DataFrame.to_torch.html" target="_blank">Polars: PyTorch integration documentation</a></li>
+                <li><a href="https://www.rhosignal.com/posts/polars-arrow-xgboost/" target="_blank">Rho Signal: Fit XGBoost models directly from Polars</a></li>
+                <li><a href="https://github.com/scikit-learn/scikit-learn/issues/25896" target="_blank">scikit-learn GitHub: Polars support discussion</a></li>
+                <li><a href="https://mljourney.com/how-can-polars-help-data-science/" target="_blank">ML Journey: How Polars helps Data Science</a></li>
+                <li><a href="https://betterprogramming.pub/polars-a-data-science-perspective-6a4674b63474" target="_blank">Better Programming: Polars from Data Science Perspective</a></li>
+                <li><a href="https://towardsdatascience.com/data-pipelines-with-polars-step-by-step-guide-f5474accacc4/" target="_blank">Towards Data Science: Data Pipelines with Polars</a></li>
+                <li><a href="https://catboost.ai/docs/" target="_blank">CatBoost: Official Documentation</a></li>
+                <li><a href="https://github.com/catboost/catboost/issues/2524" target="_blank">CatBoost GitHub: Issue #2524 - Support polars input</a></li>
+                <li><a href="https://github.com/catboost/catboost/discussions/2699" target="_blank">CatBoost GitHub: Discussion #2699 - Polars dataframe native support</a></li>
             </ul>
         </div>
     </div>

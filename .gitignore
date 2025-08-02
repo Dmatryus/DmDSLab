@@ -208,3 +208,4 @@ __marimo__/
 
 .idea
 .vscode
+/researches/polaris/pandas_polars_benchmark/scripts/data/

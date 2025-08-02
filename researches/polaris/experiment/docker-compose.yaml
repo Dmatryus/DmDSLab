@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  benchmark:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pandas-polars-benchmark
+    
+    # Настройка ресурсов контейнера
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 16G
+        reservations:
+          cpus: '2.0'
+          memory: 8G
+    
+    # Монтирование volumes для данных
+    volumes:
+      - ./data:/app/data
+      - ./results:/app/results
+      - ./logs:/app/logs
+      - ./config:/app/config
+      - ./src:/app/src  # Для разработки без пересборки образа
+    
+    # Переменные окружения
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - EXPERIMENT_NAME=${EXPERIMENT_NAME:-default}
+      - CHECKPOINT_ENABLED=${CHECKPOINT_ENABLED:-true}
+      - MAX_WORKERS=${MAX_WORKERS:-4}
+    
+    # Команда запуска
+    command: python -m src.main --config /app/config/experiment.yaml
+    
+    # Сеть (если потребуется в будущем)
+    networks:
+      - benchmark-network
+    
+    # Политика перезапуска
+    restart: unless-stopped
+    
+    # Привилегии для профилирования памяти
+    cap_add:
+      - SYS_PTRACE
+
+networks:
+  benchmark-network:
+    driver: bridge
+
+# Дополнительные volumes для персистентности данных
+volumes:
+  benchmark-data:
+    driver: local
+  benchmark-results:
+    driver: local

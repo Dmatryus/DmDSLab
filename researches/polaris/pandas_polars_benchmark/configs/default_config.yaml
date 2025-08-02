@@ -1,0 +1,146 @@
+# Конфигурация для бенчмарка Pandas vs Polars
+# Версия: 1.0.0
+
+benchmark:
+  name: "Pandas vs Polars Performance Comparison"
+  version: "1.0.0"
+  description: "Comprehensive performance benchmark comparing Pandas and Polars libraries"
+
+environment:
+  python_version: "3.11+"
+  libraries:
+    pandas:
+      version: "latest"  # или конкретная версия, например "2.0.3"
+      backends: 
+        - numpy
+        - pyarrow
+      enabled: true
+    polars:
+      version: "latest"  # или конкретная версия, например "0.19.0"
+      enabled: true
+
+data_generation:
+  # Размеры датасетов (количество строк)
+  sizes: 
+    - 10000      # 10K
+    - 100000     # 100K
+    - 1000000    # 1M
+    # - 10000000   # 10M (раскомментировать для больших тестов)
+  
+  # Seed для воспроизводимости
+  seed: 42
+  
+  # Типы данных для генерации
+  types:
+    numeric:
+      columns: 10
+      dtypes: 
+        - int64
+        - float64
+      null_ratio: 0.05
+      distributions:
+        - normal
+        - uniform
+        - exponential
+      
+    string:
+      columns: 5
+      cardinality: [10, 100, 1000]  # Количество уникальных значений
+      null_ratio: 0.1
+      length_range: [5, 50]  # Диапазон длины строк
+      
+    datetime:
+      columns: 3
+      frequency: "1min"  # Частота временных меток
+      start: "2020-01-01"
+      timezone: null  # или "UTC", "Europe/Moscow" и т.д.
+      
+    mixed:
+      numeric_columns: 5
+      string_columns: 3
+      datetime_columns: 2
+
+# Операции для тестирования
+operations:
+  io:
+    - read_csv
+    - read_parquet
+    - write_csv
+    - write_parquet
+    
+  filter:
+    - simple_filter      # df[df['col'] > value]
+    - complex_filter     # df[(df['col1'] > value1) & (df['col2'] < value2)]
+    - isin_filter       # df[df['col'].isin(values)]
+    - pattern_filter    # df[df['col'].str.contains('pattern')]
+    
+  groupby:
+    - single_column_groupby    # df.groupby('col').agg({'col2': 'mean'})
+    - multi_column_groupby     # df.groupby(['col1', 'col2']).agg(...)
+    - multi_aggregation       # df.groupby('col').agg({'col2': ['mean', 'sum', 'std']})
+    # - window_functions      # раскомментировать если нужны оконные функции
+    
+  sort:
+    - single_column_sort      # df.sort_values('col')
+    - multi_column_sort       # df.sort_values(['col1', 'col2'])
+    
+  join:
+    - inner_join             # pd.merge(df1, df2, on='key', how='inner')
+    - left_join              # pd.merge(df1, df2, on='key', how='left')
+    - merge_multiple_keys    # pd.merge(df1, df2, on=['key1', 'key2'])
+    
+  string:
+    - concatenation          # df['col1'] + df['col2']
+    - contains              # df['col'].str.contains('pattern')
+    - regex_extract         # df['col'].str.extract(r'(\d+)')
+    - case_conversion       # df['col'].str.lower()
+
+# Параметры профилирования
+profiling:
+  min_runs: 3          # Минимальное количество запусков
+  max_runs: 100        # Максимальное количество запусков
+  target_cv: 0.05      # Целевой коэффициент вариации (5%)
+  timeout_seconds: 300 # Таймаут для одной операции
+  memory_sampling_interval: 0.1  # Интервал замера памяти (секунды)
+  isolate_process: true         # Выполнять операции в изолированном процессе
+  warmup_runs: 1               # Количество прогревочных запусков
+
+# Параметры статистического анализа
+analysis:
+  outlier_method: "iqr"        # Метод детекции выбросов: "iqr" или "zscore"
+  outlier_threshold: 1.5       # Порог для IQR метода
+  min_samples_for_stats: 3     # Минимум замеров для статистики
+  
+# Параметры генерации отчетов  
+reporting:
+  output_format: "html"        # Формат отчета: "html", "json", "csv"
+  include_raw_data: true       # Включать сырые данные в отчет
+  statistical_tests:
+    - normality_test          # Тест на нормальность распределения
+    - paired_comparison       # Парное сравнение результатов
+    # - mann_whitney          # Непараметрический тест (если данные не нормальные)
+    # - wilcoxon             # Знаковый ранговый тест Вилкоксона
+  confidence_level: 0.95      # Уровень доверия для статистических тестов
+  chart_theme: "plotly"       # Тема для графиков
+  include_system_info: true   # Включать информацию о системе
+  
+# Параметры логирования
+logging:
+  console_level: "INFO"       # Уровень для консоли: DEBUG, INFO, WARNING, ERROR
+  file_level: "DEBUG"         # Уровень для файла
+  use_colors: true           # Цветной вывод в консоль
+  log_dir: "logs"            # Директория для логов
+
+# Пути к директориям
+paths:
+  data_dir: "data/generated"
+  results_dir: "results"
+  reports_dir: "reports"
+  checkpoint_dir: "results/checkpoints"
+
+# Дополнительные параметры
+options:
+  save_intermediate_results: true  # Сохранять промежуточные результаты
+  compress_output: false          # Сжимать выходные файлы
+  parallel_operations: false      # Параллельное выполнение операций (экспериментально)
+  continue_on_error: true        # Продолжать при ошибке в операции

@@ -1,0 +1,346 @@
+# JSON Schema для валидации конфигурации бенчмарка
+# Формат: JSON Schema Draft 7
+
+$schema: "http://json-schema.org/draft-07/schema#"
+type: object
+required:
+  - benchmark
+  - environment
+  - data_generation
+  - operations
+  - profiling
+  - reporting
+
+properties:
+  benchmark:
+    type: object
+    required:
+      - name
+      - version
+    properties:
+      name:
+        type: string
+        description: "Название бенчмарка"
+      version:
+        type: string
+        pattern: "^\\d+\\.\\d+\\.\\d+$"
+        description: "Версия в формате semantic versioning (X.Y.Z)"
+      description:
+        type: string
+        description: "Описание бенчмарка"
+
+  environment:
+    type: object
+    required:
+      - libraries
+    properties:
+      python_version:
+        type: string
+        description: "Требуемая версия Python"
+      libraries:
+        type: object
+        properties:
+          pandas:
+            type: object
+            properties:
+              version:
+                type: string
+                description: "Версия pandas или 'latest'"
+              backends:
+                type: array
+                items:
+                  type: string
+                  enum: ["numpy", "pyarrow"]
+                minItems: 1
+                uniqueItems: true
+                description: "Бэкенды pandas для тестирования"
+              enabled:
+                type: boolean
+                default: true
+                description: "Включить pandas в тестирование"
+          polars:
+            type: object
+            properties:
+              version:
+                type: string
+                description: "Версия polars или 'latest'"
+              enabled:
+                type: boolean
+                default: true
+                description: "Включить polars в тестирование"
+        minProperties: 1
+        additionalProperties: false
+
+  data_generation:
+    type: object
+    required:
+      - sizes
+    properties:
+      sizes:
+        type: array
+        items:
+          type: integer
+          minimum: 1
+        minItems: 1
+        uniqueItems: true
+        description: "Размеры датасетов (количество строк)"
+      seed:
+        type: integer
+        default: 42
+        description: "Seed для генератора случайных чисел"
+      types:
+        type: object
+        properties:
+          numeric:
+            type: object
+            properties:
+              columns:
+                type: integer
+                minimum: 1
+                description: "Количество числовых колонок"
+              dtypes:
+                type: array
+                items:
+                  type: string
+                  enum: ["int32", "int64", "float32", "float64"]
+                description: "Типы данных для числовых колонок"
+              null_ratio:
+                type: number
+                minimum: 0
+                maximum: 1
+                description: "Доля пропущенных значений"
+              distributions:
+                type: array
+                items:
+                  type: string
+                  enum: ["normal", "uniform", "exponential"]
+                description: "Распределения для генерации данных"
+          string:
+            type: object
+            properties:
+              columns:
+                type: integer
+                minimum: 1
+                description: "Количество строковых колонок"
+              cardinality:
+                type: array
+                items:
+                  type: integer
+                  minimum: 1
+                description: "Количество уникальных значений"
+              null_ratio:
+                type: number
+                minimum: 0
+                maximum: 1
+                description: "Доля пропущенных значений"
+              length_range:
+                type: array
+                items:
+                  type: integer
+                  minimum: 1
+                minItems: 2
+                maxItems: 2
+                description: "[min, max] длина строк"
+          datetime:
+            type: object
+            properties:
+              columns:
+                type: integer
+                minimum: 1
+                description: "Количество datetime колонок"
+              frequency:
+                type: string
+                description: "Частота временных меток (pandas offset)"
+              start:
+                type: string
+                format: date
+                description: "Начальная дата"
+              timezone:
+                type: ["string", "null"]
+                description: "Временная зона или null"
+          mixed:
+            type: object
+            properties:
+              numeric_columns:
+                type: integer
+                minimum: 0
+                description: "Количество числовых колонок"
+              string_columns:
+                type: integer
+                minimum: 0
+                description: "Количество строковых колонок"
+              datetime_columns:
+                type: integer
+                minimum: 0
+                description: "Количество datetime колонок"
+
+  operations:
+    type: object
+    minProperties: 1
+    additionalProperties:
+      type: array
+      items:
+        type: string
+      minItems: 1
+      uniqueItems: true
+    description: "Категории и списки операций для тестирования"
+
+  profiling:
+    type: object
+    properties:
+      min_runs:
+        type: integer
+        minimum: 1
+        default: 3
+        description: "Минимальное количество запусков"
+      max_runs:
+        type: integer
+        minimum: 1
+        default: 100
+        description: "Максимальное количество запусков"
+      target_cv:
+        type: number
+        minimum: 0
+        maximum: 1
+        default: 0.05
+        description: "Целевой коэффициент вариации"
+      timeout_seconds:
+        type: integer
+        minimum: 1
+        default: 300
+        description: "Таймаут для одной операции (секунды)"
+      memory_sampling_interval:
+        type: number
+        minimum: 0.01
+        default: 0.1
+        description: "Интервал замера памяти (секунды)"
+      isolate_process:
+        type: boolean
+        default: true
+        description: "Выполнять операции в изолированном процессе"
+      warmup_runs:
+        type: integer
+        minimum: 0
+        default: 1
+        description: "Количество прогревочных запусков"
+
+  analysis:
+    type: object
+    properties:
+      outlier_method:
+        type: string
+        enum: ["iqr", "zscore"]
+        default: "iqr"
+        description: "Метод детекции выбросов"
+      outlier_threshold:
+        type: number
+        minimum: 0
+        default: 1.5
+        description: "Порог для метода детекции выбросов"
+      min_samples_for_stats:
+        type: integer
+        minimum: 2
+        default: 3
+        description: "Минимум замеров для расчета статистики"
+
+  reporting:
+    type: object
+    properties:
+      output_format:
+        type: string
+        enum: ["html", "json", "csv"]
+        default: "html"
+        description: "Формат выходного отчета"
+      include_raw_data:
+        type: boolean
+        default: true
+        description: "Включать сырые данные в отчет"
+      statistical_tests:
+        type: array
+        items:
+          type: string
+          enum: ["normality_test", "paired_comparison", "mann_whitney", "wilcoxon"]
+        description: "Статистические тесты для анализа"
+      confidence_level:
+        type: number
+        minimum: 0
+        maximum: 1
+        default: 0.95
+        description: "Уровень доверия для статистических тестов"
+      chart_theme:
+        type: string
+        default: "plotly"
+        description: "Тема для графиков"
+      include_system_info:
+        type: boolean
+        default: true
+        description: "Включать информацию о системе в отчет"
+
+  logging:
+    type: object
+    properties:
+      console_level:
+        type: string
+        enum: ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        default: "INFO"
+        description: "Уровень логирования для консоли"
+      file_level:
+        type: string
+        enum: ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        default: "DEBUG"
+        description: "Уровень логирования для файла"
+      use_colors:
+        type: boolean
+        default: true
+        description: "Использовать цветной вывод в консоль"
+      log_dir:
+        type: string
+        default: "logs"
+        description: "Директория для логов"
+
+  paths:
+    type: object
+    properties:
+      data_dir:
+        type: string
+        default: "data/generated"
+        description: "Директория для генерируемых данных"
+      results_dir:
+        type: string
+        default: "results"
+        description: "Директория для результатов"
+      reports_dir:
+        type: string
+        default: "reports"
+        description: "Директория для отчетов"
+      checkpoint_dir:
+        type: string
+        default: "results/checkpoints"
+        description: "Директория для чекпоинтов"
+
+  options:
+    type: object
+    properties:
+      save_intermediate_results:
+        type: boolean
+        default: true
+        description: "Сохранять промежуточные результаты"
+      compress_output:
+        type: boolean
+        default: false
+        description: "Сжимать выходные файлы"
+      parallel_operations:
+        type: boolean
+        default: false
+        description: "Параллельное выполнение операций"
+      continue_on_error:
+        type: boolean
+        default: true
+        description: "Продолжать выполнение при ошибке"
+
+# Дополнительные ограничения
+dependencies:
+  profiling:
+    properties:
+      min_runs:
+        maximum: { $data: "/profiling/max_runs" }

@@ -15,8 +15,10 @@ from datetime import datetime, timedelta
 import string
 import random
 
-from researches.polaris.pandas_polars_benchmark.src import get_logger
-from researches.polaris.pandas_polars_benchmark.src.core import DataGenerationConfig
+from researches.polaris.pandas_polars_benchmark.src.utils.logging import get_logger
+from researches.polaris.pandas_polars_benchmark.src.core.config import (
+    DataGenerationConfig,
+)
 
 
 @dataclass

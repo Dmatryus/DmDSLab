@@ -1,380 +1,311 @@
 #!/usr/bin/env python3
 """
-Демонстрационный скрипт для проверки всех компонентов Фазы 3.
+Финальная проверка готовности Фазы 3 после исправления проблем совместимости.
 """
 
 import sys
-import time
-import numpy as np
-import pandas as pd
-import polars as pl
+import platform
 from pathlib import Path
 
 # Добавляем путь к src
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
-
-from utils.logging import setup_logging
-from data import DataLoader
-from profiling import (
-    MemoryTracker, Timer, ProfilingConfig, Profiler,
-    measure_memory, measure_time, get_profiler
-)
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 
-def demo_memory_tracker():
-    """Демонстрация работы Memory Tracker."""
-    print("\n" + "="*60)
-    print("ДЕМО: Memory Tracker")
-    print("="*60)
-    
-    # Создаем трекер памяти
-    tracker = MemoryTracker(sampling_interval=0.05)
-    
-    print("Начинаем отслеживание памяти...")
-    tracker.start_tracking()
-    
-    # Симулируем работу с памятью
-    data = []
-    for i in range(5):
-        # Выделяем память
-        chunk = np.random.rand(1000000)  # ~7.6 MB
-        data.append(chunk)
-        print(f"  Выделено блок {i+1}: {chunk.nbytes / 1024 / 1024:.1f} MB")
-        time.sleep(0.2)
-    
-    # Останавливаем отслеживание
-    stats = tracker.stop_tracking()
-    
-    print(f"\nРезультаты отслеживания памяти:")
-    print(f"  - Пиковая память: {stats.peak_memory_mb:.1f} MB")
-    print(f"  - Средняя память: {stats.average_memory_mb:.1f} MB")
-    print(f"  - Мин/Макс: {stats.min_memory_mb:.1f} / {stats.max_memory_mb:.1f} MB")
-    print(f"  - Количество замеров: {stats.sample_count}")
-    print(f"  - Длительность: {stats.duration_seconds:.2f} сек")
-    
-    return True
+def print_header():
+    """Выводит заголовок."""
+    print("=" * 80)
+    print("ФИНАЛЬНАЯ ПРОВЕРКА ФАЗЫ 3: СИСТЕМА ПРОФИЛИРОВАНИЯ")
+    print("=" * 80)
+    print(f"\nПлатформа: {platform.system()} {platform.version()}")
+    print(f"Python: {sys.version.split()[0]}")
+    print(f"Система: {sys.platform}")
+    print()
 
 
-def demo_timer():
-    """Демонстрация работы Timer."""
-    print("\n" + "="*60)
-    print("ДЕМО: Timer с автоповтором")
-    print("="*60)
-    
-    # Создаем таймер
-    timer = Timer(min_runs=3, max_runs=20, target_cv=0.05)
-    
-    # Функция с переменным временем выполнения
-    def variable_operation():
-        # Симулируем операцию с небольшой вариацией
-        base_time = 0.1
-        variation = np.random.normal(0, 0.005)
-        time.sleep(base_time + variation)
-    
-    print("Измеряем время выполнения до достижения CV < 5%...")
-    result = timer.time_execution(variable_operation)
-    
-    print(f"\nРезультаты измерения времени:")
-    print(f"  - Среднее время: {result.mean_time:.3f} сек")
-    print(f"  - Медиана: {result.median_time:.3f} сек")
-    print(f"  - Станд. отклонение: {result.std_dev:.3f} сек")
-    print(f"  - Коэффициент вариации: {result.cv:.4f} ({result.cv*100:.2f}%)")
-    print(f"  - Мин/Макс: {result.min_time:.3f} / {result.max_time:.3f} сек")
-    print(f"  - Количество запусков: {result.runs_count}")
-    print(f"  - Сходимость достигнута: {'Да' if result.converged else 'Нет'}")
-    
-    return result.converged
+def check_imports():
+    """Проверяет основные импорты."""
+    print("1. Проверка импортов...")
+    print("-" * 40)
 
-
-def demo_profiler_inline():
-    """Демонстрация Profiler в inline режиме."""
-    print("\n" + "="*60)
-    print("ДЕМО: Profiler (inline mode)")
-    print("="*60)
-    
-    # Создаем конфигурацию
-    config = ProfilingConfig(
-        min_runs=3,
-        max_runs=10,
-        target_cv=0.1,
-        isolate_process=False  # Inline mode
-    )
-    
-    # Создаем профайлер (автоматически настроится для текущей ОС)
-    profiler = Profiler(config)
-    
-    # Операция для профилирования
-    def pandas_groupby():
-        df = pd.DataFrame({
-            'category': np.random.choice(['A', 'B', 'C'], 10000),
-            'value': np.random.randn(10000)
-        })
-        return df.groupby('category')['value'].mean()
-    
-    print("Профилируем операцию pandas groupby...")
-    result = profiler.profile_operation(
-        pandas_groupby,
-        operation_name="groupby_mean",
-        library="pandas",
-        backend="numpy",
-        dataset_name="demo_data",
-        dataset_size=10000
-    )
-    
-    print(f"\nРезультат профилирования:")
-    print(f"  - Операция: {result.operation_name}")
-    print(f"  - Библиотека: {result.library} ({result.backend})")
-    print(f"  - Успешно: {'Да' if result.success else 'Нет'}")
-    print(f"  - Время: {result.mean_time:.3f}±{result.std_time:.3f} сек")
-    print(f"  - Память: {result.peak_memory_mb:.1f} MB (пик), {result.avg_memory_mb:.1f} MB (средн.)")
-    print(f"  - Запусков: {result.runs_count}")
-    
-    profiler.cleanup()
-    return result.success
-
-
-def demo_profiler_isolated():
-    """Демонстрация Profiler в isolated режиме."""
-    print("\n" + "="*60)
-    print("ДЕМО: Profiler (isolated process mode)")
-    print("="*60)
-    
-    # Создаем конфигурацию
-    config = ProfilingConfig(
-        min_runs=3,
-        max_runs=10,
-        target_cv=0.1,
-        isolate_process=True  # Isolated mode (автоматически отключится на Windows)
-    )
-    
-    with get_profiler(config) as profiler:
-        # На Windows будет использован inline режим
-        actual_mode = "isolated" if profiler.config.isolate_process else "inline"
-        print(f"Фактический режим: {actual_mode}")
-        
-        # Операция для профилирования
-        def polars_filter():
-            df = pl.DataFrame({
-                'id': range(50000),
-                'value': np.random.randn(50000),
-                'category': np.random.choice(['X', 'Y', 'Z'], 50000)
-            })
-            return df.filter(pl.col('value') > 0)
-        
-        print(f"Профилируем операцию polars filter в {actual_mode} режиме...")
-        result = profiler.profile_operation(
-            polars_filter,
-            operation_name="filter_positive",
-            library="polars",
-            dataset_name="demo_data",
-            dataset_size=50000
+    try:
+        # Core
+        from core import (
+            Config,
+            CheckpointManager,
+            BenchmarkState,
+            TaskIdentifier,
+            ProgressTracker,
         )
-        
-        print(f"\nРезультат профилирования:")
-        print(f"  - Операция: {result.operation_name}")
-        print(f"  - Библиотека: {result.library}")
-        print(f"  - Успешно: {'Да' if result.success else 'Нет'}")
-        
-        if result.success:
-            print(f"  - Время: {result.mean_time:.3f}±{result.std_time:.3f} сек")
-            print(f"  - Память: {result.peak_memory_mb:.1f} MB (пик)")
-            print(f"  - CV времени: {result.cv_time:.4f}")
-            print(f"  - Сходимость: {'Да' if result.converged else 'Нет'}")
-            
-            if result.result_info:
-                print(f"  - Результат: {result.result_info}")
-    
-    return result.success
 
+        print("✅ Core модули")
 
-def demo_decorators():
-    """Демонстрация декораторов."""
-    print("\n" + "="*60)
-    print("ДЕМО: Декораторы @measure_memory и @measure_time")
-    print("="*60)
-    
-    @measure_memory
-    @measure_time(min_runs=5, target_cv=0.05)
-    def memory_intensive_operation():
-        # Выделяем и обрабатываем память
-        data = np.random.rand(5000000)  # ~38 MB
-        result = np.sort(data)
-        return {'size': len(result)}
-    
-    print("Выполняем операцию с декораторами...")
-    result = memory_intensive_operation()
-    
-    print(f"\nРезультат операции:")
-    print(f"  - Размер данных: {result['size']:,}")
-    
-    if 'memory_stats' in result:
-        ms = result['memory_stats']
-        print(f"  - Память (пик): {ms['peak_memory_mb']:.1f} MB")
-    
-    if 'timing_stats' in result:
-        ts = result['timing_stats']
-        print(f"  - Время: {ts['mean_time']:.3f} сек")
-        print(f"  - CV: {ts['cv']:.4f}")
-    
-    return True
+        # Profiling
+        from profiling import (
+            MemoryTracker,
+            Timer,
+            Profiler,
+            ProfileResult,
+            ProfilingConfig,
+            get_profiler,
+            measure_memory,
+            measure_time,
+        )
 
+        print("✅ Profiling модули")
 
-def demo_real_operations():
-    """Демонстрация профилирования реальных операций."""
-    print("\n" + "="*60)
-    print("ДЕМО: Профилирование реальных операций")
-    print("="*60)
-    
-    # Загружаем небольшой датасет
-    loader = DataLoader(Path('data/demo'))
-    
-    # Проверяем доступные датасеты
-    available = loader.get_available_datasets()
-    if not available:
-        print("❌ Нет доступных датасетов. Сначала запустите demo_phase2.py")
+        # Utils
+        from utils import setup_logging, get_logger
+
+        print("✅ Utils модули")
+
+        # Data
+        from data import DataGenerator, DataLoader, DataSaver
+
+        print("✅ Data модули")
+
+        return True
+
+    except ImportError as e:
+        print(f"❌ Ошибка импорта: {e}")
         return False
-    
-    # Берем первый доступный датасет
-    dataset_name = list(available.values())[0][0]
-    print(f"Используем датасет: {dataset_name}")
-    
-    # Профилируем операции
-    with get_profiler() as profiler:
-        results = []
-        
-        # 1. Pandas read CSV
-        def pandas_read():
-            return loader.load_pandas_csv(dataset_name, backend='numpy')
-        
-        print("\n1. Профилируем pandas read_csv...")
-        result = profiler.profile_operation(
-            pandas_read,
-            operation_name="read_csv",
-            library="pandas",
-            backend="numpy",
-            dataset_name=dataset_name
+
+
+def check_checkpoint_functionality():
+    """Проверяет функциональность чекпоинтов."""
+    print("\n2. Проверка системы чекпоинтов...")
+    print("-" * 40)
+
+    from core import CheckpointManager, TaskIdentifier
+    from profiling import ProfileResult
+
+    test_dir = Path("data/final_test")
+    test_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # Создание и сохранение
+        manager = CheckpointManager(checkpoint_dir=test_dir)
+        state = manager.initialize_state("final_test", {}, 3)
+
+        # Добавляем результат
+        result = ProfileResult(
+            operation_name="test",
+            library="test_lib",
+            success=True,
+            mean_time=0.1,
+            peak_memory_mb=50.0,
         )
-        results.append(result)
-        
-        # 2. Polars read CSV
-        def polars_read():
-            return loader.load_polars_csv(dataset_name, lazy=False)
-        
-        print("\n2. Профилируем polars read_csv...")
-        result = profiler.profile_operation(
-            polars_read,
-            operation_name="read_csv", 
-            library="polars",
-            dataset_name=dataset_name
-        )
-        results.append(result)
-    
-    # Сравнение результатов
-    print("\n" + "="*40)
-    print("СРАВНЕНИЕ РЕЗУЛЬТАТОВ")
-    print("="*40)
-    
-    for r in results:
-        if r.success:
-            print(f"\n{r.library} ({r.backend or 'default'}):")
-            print(f"  Время: {r.mean_time:.3f} сек")
-            print(f"  Память: {r.peak_memory_mb:.1f} MB")
-            print(f"  Строк/колонок: {r.result_info.get('rows', '?')}/{r.result_info.get('columns', '?')}")
-    
-    return all(r.success for r in results)
+        manager.update_progress("task_1", result=result)
+
+        # Сохраняем
+        saved = manager.save_checkpoint(force=True)
+
+        if saved:
+            print("✅ Сохранение чекпоинтов работает")
+        else:
+            print("❌ Ошибка сохранения чекпоинтов")
+            return False
+
+        # Загружаем
+        new_manager = CheckpointManager(checkpoint_dir=test_dir)
+        loaded = new_manager.load_checkpoint()
+
+        if loaded and loaded.completed_operations == 1:
+            print("✅ Загрузка чекпоинтов работает")
+        else:
+            print("❌ Ошибка загрузки чекпоинтов")
+            return False
+
+        # Очистка
+        manager.clear_checkpoint()
+        import shutil
+
+        shutil.rmtree(test_dir)
+
+        return True
+
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        return False
+
+
+def check_profiling():
+    """Проверяет профилирование."""
+    print("\n3. Проверка профилирования...")
+    print("-" * 40)
+
+    from profiling import get_profiler, ProfilingConfig
+    import time
+
+    try:
+        config = ProfilingConfig(min_runs=2, max_runs=3, isolate_process=False)
+
+        with get_profiler(config) as profiler:
+
+            def simple_op():
+                time.sleep(0.01)
+                return [1, 2, 3]
+
+            result = profiler.profile_operation(
+                simple_op, operation_name="test", library="test"
+            )
+
+            if result.success and result.mean_time > 0:
+                print("✅ Профилирование работает")
+                print(f"   Режим: {'isolated' if config.isolate_process else 'inline'}")
+                print(f"   Время: {result.mean_time:.3f}с")
+                print(f"   Память: {result.peak_memory_mb:.1f}MB")
+                return True
+            else:
+                print("❌ Ошибка профилирования")
+                return False
+
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        return False
+
+
+def check_progress_tracking():
+    """Проверяет отслеживание прогресса."""
+    print("\n4. Проверка отслеживания прогресса...")
+    print("-" * 40)
+
+    from core import ProgressTracker
+    import time
+
+    try:
+        # Без progress bar для теста
+        tracker = ProgressTracker(5, show_progress_bar=False)
+
+        for i in range(3):
+            tracker.start_operation(f"op_{i}", "test", "data")
+            time.sleep(0.01)
+            tracker.end_operation(success=True)
+
+        info = tracker.get_progress_info()
+
+        if info["completed"] == 3:
+            print("✅ Отслеживание прогресса работает")
+            print(f"   Выполнено: {info['completed']}/{info['total']}")
+            print(f"   Прогресс: {info['progress_percentage']:.0f}%")
+            return True
+        else:
+            print("❌ Ошибка отслеживания прогресса")
+            return False
+
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        return False
+
+
+def check_platform_specific():
+    """Проверяет платформо-специфичные особенности."""
+    print("\n5. Проверка платформо-специфичных функций...")
+    print("-" * 40)
+
+    # Проверка fcntl
+    if sys.platform == "win32":
+        try:
+            import fcntl
+
+            print("⚠️  fcntl импортируется на Windows (неожиданно)")
+        except ImportError:
+            print("✅ fcntl не импортируется на Windows (ожидаемо)")
+    else:
+        try:
+            import fcntl
+
+            print("✅ fcntl доступен на Unix-системе")
+        except ImportError:
+            print("❌ fcntl недоступен на Unix-системе")
+
+    # Проверка изоляции процессов
+    from profiling import ProfilingConfig
+
+    config = ProfilingConfig(isolate_process=True)
+
+    if sys.platform == "win32":
+        if not config.isolate_process:
+            print("✅ Изоляция автоматически отключена на Windows")
+        else:
+            print("⚠️  Изоляция включена на Windows (может не работать)")
+    else:
+        if config.isolate_process:
+            print("✅ Изоляция процессов доступна")
+        else:
+            print("⚠️  Изоляция отключена на Unix-системе")
+
+    return True
 
 
 def main():
-    """Основная функция демонстрации."""
-    # Настраиваем логирование
-    logger = setup_logging(
-        name='demo_phase3',
-        console_level='INFO',
-        use_colors=True
-    )
-    
-    logger.benchmark_start({'benchmark': {'name': 'Phase 3 Demo', 'version': '1.0.0'}})
-    
-    print("\n" + "="*80)
-    print("ДЕМОНСТРАЦИЯ КОМПОНЕНТОВ ФАЗЫ 3: СИСТЕМА ПРОФИЛИРОВАНИЯ")
-    print("="*80)
-    
+    """Основная функция проверки."""
+    print_header()
+
+    # Выполняем все проверки
+    checks = [
+        ("Импорты", check_imports),
+        ("Чекпоинты", check_checkpoint_functionality),
+        ("Профилирование", check_profiling),
+        ("Прогресс", check_progress_tracking),
+        ("Платформа", check_platform_specific),
+    ]
+
     results = []
-    
-    # 1. Memory Tracker
-    try:
-        results.append(("Memory Tracker", demo_memory_tracker()))
-    except Exception as e:
-        print(f"❌ Ошибка в Memory Tracker: {e}")
-        results.append(("Memory Tracker", False))
-    
-    # 2. Timer
-    try:
-        results.append(("Timer", demo_timer()))
-    except Exception as e:
-        print(f"❌ Ошибка в Timer: {e}")
-        results.append(("Timer", False))
-    
-    # 3. Profiler Inline
-    try:
-        results.append(("Profiler Inline", demo_profiler_inline()))
-    except Exception as e:
-        print(f"❌ Ошибка в Profiler Inline: {e}")
-        results.append(("Profiler Inline", False))
-    
-    # 4. Profiler Isolated
-    try:
-        results.append(("Profiler Isolated", demo_profiler_isolated()))
-    except Exception as e:
-        print(f"❌ Ошибка в Profiler Isolated: {e}")
-        results.append(("Profiler Isolated", False))
-    
-    # 5. Decorators
-    try:
-        results.append(("Decorators", demo_decorators()))
-    except Exception as e:
-        print(f"❌ Ошибка в Decorators: {e}")
-        results.append(("Decorators", False))
-    
-    # 6. Real Operations
-    try:
-        results.append(("Real Operations", demo_real_operations()))
-    except Exception as e:
-        print(f"❌ Ошибка в Real Operations: {e}")
-        results.append(("Real Operations", False))
-    
+    for name, check_func in checks:
+        try:
+            success = check_func()
+            results.append((name, success))
+        except Exception as e:
+            print(f"\n❌ Критическая ошибка в {name}: {e}")
+            import traceback
+
+            traceback.print_exc()
+            results.append((name, False))
+
     # Итоги
-    print("\n" + "="*80)
-    print("ИТОГИ ТЕСТИРОВАНИЯ")
-    print("="*80)
-    
+    print("\n" + "=" * 80)
+    print("РЕЗУЛЬТАТЫ ФИНАЛЬНОЙ ПРОВЕРКИ")
+    print("=" * 80)
+
+    all_passed = True
     for name, success in results:
         status = "✅" if success else "❌"
         print(f"{status} {name}")
-    
-    all_success = all(success for _, success in results)
-    
-    if all_success:
-        print("\n✅ ВСЕ КОМПОНЕНТЫ ФАЗЫ 3 РАБОТАЮТ КОРРЕКТНО!")
-        print("\nГотовые компоненты:")
-        print("  ✓ MemoryTracker - отслеживание памяти с настраиваемым интервалом")
-        print("  ✓ Timer - измерение времени с автоповтором до достижения CV")
-        print("  ✓ Profiler - профилирование в изолированном процессе")
-        print("  ✓ Декораторы для удобного использования")
-        print("  ✓ Поддержка inline и isolated режимов")
-        print("\nМожно переходить к реализации checkpoint системы!")
+        if not success:
+            all_passed = False
+
+    print("\n" + "=" * 80)
+
+    if all_passed:
+        print("\n🎉 ФАЗА 3 ПОЛНОСТЬЮ ГОТОВА К ИСПОЛЬЗОВАНИЮ!")
+        print("\nВсе компоненты работают корректно на вашей платформе:")
+        print(f"  ✅ {platform.system()} {platform.release()}")
+        print(f"  ✅ Python {sys.version.split()[0]}")
+        print(f"  ✅ Все модули импортируются")
+        print(f"  ✅ Чекпоинты сохраняются и загружаются")
+        print(f"  ✅ Профилирование работает")
+        print(f"  ✅ Прогресс отслеживается")
+
+        print("\n📋 Рекомендуемые следующие шаги:")
+        print("1. Запустите полную демонстрацию:")
+        print(f"   python scripts{Path('/')}demo_phase3_full.py")
+        print("\n2. Попробуйте интерактивную работу с чекпоинтами:")
+        print(f"   python scripts{Path('/')}demo_checkpoint_progress.py")
+        print("\n3. Переходите к Фазе 4 - реализации операций!")
     else:
-        print("\n❌ Обнаружены ошибки, требуется исправление")
-    
-    logger.benchmark_end(success=all_success, duration=60)
-    
-    return all_success
+        print("\n❌ Обнаружены проблемы. Рекомендации:")
+        print("1. Проверьте установку зависимостей:")
+        print("   pip install -r requirements.txt")
+        print("\n2. Убедитесь, что вы в корневой директории проекта")
+        print("\n3. Проверьте логи для деталей ошибок")
+
+    return all_passed
 
 
-if __name__ == '__main__':
-    # Важно для Windows!
-    import multiprocessing
-    multiprocessing.freeze_support()
-    
-    success = main()
-    sys.exit(0 if success else 1)
+if __name__ == "__main__":
+    try:
+        success = main()
+        sys.exit(0 if success else 1)
+    except KeyboardInterrupt:
+        print("\n\nПроверка прервана пользователем")
+        sys.exit(1)

@@ -12,7 +12,7 @@ from .base import (
     get_operation,
     get_operations_by_category,
     get_all_operations,
-    operation
+    operation,
 )
 
 # IO операции
@@ -22,7 +22,7 @@ from .io_ops import (
     WriteCSVOperation,
     WriteParquetOperation,
     create_io_operations,
-    profile_io_operation
+    profile_io_operation,
 )
 
 # Filter операции
@@ -30,37 +30,49 @@ from .filter_ops import (
     SimpleFilterOperation,
     ComplexFilterOperation,
     IsInFilterOperation,
-    PatternFilterOperation
+    PatternFilterOperation,
+)
+
+# Добавить в импорты:
+from .string_ops import (
+    StringContainsOperation,
+    StringReplaceOperation,
+    StringExtractOperation,
+    StringConcatOperation,
+    StringLengthOperation,
 )
 
 # Экспортируемые имена
 __all__ = [
     # Базовые классы
-    'Operation',
-    'DataAwareOperation',
-    'OperationResult',
-    'OperationRegistry',
-    
+    "Operation",
+    "DataAwareOperation",
+    "OperationResult",
+    "OperationRegistry",
     # Функции реестра
-    'register_operation',
-    'get_operation',
-    'get_operations_by_category',
-    'get_all_operations',
-    'operation',
-    
+    "register_operation",
+    "get_operation",
+    "get_operations_by_category",
+    "get_all_operations",
+    "operation",
     # IO операции
-    'ReadCSVOperation',
-    'ReadParquetOperation',
-    'WriteCSVOperation',
-    'WriteParquetOperation',
-    'create_io_operations',
-    'profile_io_operation',
-    
+    "ReadCSVOperation",
+    "ReadParquetOperation",
+    "WriteCSVOperation",
+    "WriteParquetOperation",
+    "create_io_operations",
+    "profile_io_operation",
     # Filter операции
-    'SimpleFilterOperation',
-    'ComplexFilterOperation',
-    'IsInFilterOperation',
-    'PatternFilterOperation',
+    "SimpleFilterOperation",
+    "ComplexFilterOperation",
+    "IsInFilterOperation",
+    "PatternFilterOperation",
+    # String операции
+    "StringContainsOperation",
+    "StringReplaceOperation",
+    "StringExtractOperation",
+    "StringConcatOperation",
+    "StringLengthOperation",
 ]
 
 
@@ -68,16 +80,16 @@ __all__ = [
 def get_available_operations() -> dict:
     """
     Возвращает словарь всех доступных операций по категориям.
-    
+
     Returns:
         dict: Словарь вида {категория: {имя_операции: операция}}
     """
     result = {}
     all_ops = get_all_operations()
-    
+
     for category, operations in all_ops.items():
         result[category] = {op.name: op for op in operations}
-    
+
     return result
 
 
@@ -85,7 +97,7 @@ def list_operations() -> None:
     """Выводит список всех доступных операций."""
     print("Доступные операции:")
     print("-" * 50)
-    
+
     for category, operations in get_all_operations().items():
         print(f"\n{category.upper()}:")
         for op in operations:

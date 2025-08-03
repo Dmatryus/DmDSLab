@@ -11,17 +11,17 @@ from pathlib import Path
 def get_version():
     """Извлечь версию из dmdslab/__init__.py."""
     init_file = Path(__file__).parent.parent / "dmdslab" / "__init__.py"
-    
+
     if not init_file.exists():
         raise FileNotFoundError(f"File not found: {init_file}")
-    
-    content = init_file.read_text(encoding='utf-8')
-    
+
+    content = init_file.read_text(encoding="utf-8")
+
     # Поиск строки __version__ = "..."
     match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', content)
     if not match:
         raise ValueError("Could not find __version__ in __init__.py")
-    
+
     return match.group(1)
 
 

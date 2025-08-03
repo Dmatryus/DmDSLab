@@ -1,7 +1,8 @@
 # Основные зависимости
-pandas>=1.5.0
-scikit-learn~=1.0.0
-pytest~=8.3.4
-numpy~=1.21.0
-ucimlrepo~=0.0.7
-setuptools
+pandas>=2.0.0      # Обновлено для лучшей поддержки Python 3.11
+scikit-learn>=1.3.0  # Обновлено
+pytest>=8.0.0      # Последняя версия
+numpy>=1.24.0      # Обновлено для Python 3.11
+ucimlrepo>=0.0.7
+setuptools>=68.0.0  # Современная версия
+tqdm

@@ -50,6 +50,10 @@ from researches.polaris.pandas_polars_benchmark.src.utils.logging import (
     get_logger,
 )
 
+from researches.polaris.pandas_polars_benchmark.src.analysis.comparison_engine import (
+    ComparisonMetric,
+)
+
 
 @dataclass
 class BenchmarkTask:
@@ -482,7 +486,7 @@ class BenchmarkRunner:
         self.comparison_matrix = ComparisonMatrix(
             baseline_library="pandas",
             comparison_library="polars",
-            metric=self.comparison_engine.metric,
+            metric=ComparisonMetric.EXECUTION_TIME,
             results=comparison_results,
         )
 
@@ -517,8 +521,8 @@ class BenchmarkRunner:
                             "dataset": result.dataset_name,
                             "dataset_size": result.dataset_size,
                             "execution_time": time,
-                            "memory_peak": result.memory_peak_mb,
-                            "memory_mean": result.memory_mean_mb,
+                            "memory_peak": result.peak_memory_mb,
+                            "memory_mean": result.avg_memory_mb,
                         }
                     )
 

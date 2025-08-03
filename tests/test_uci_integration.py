@@ -4,7 +4,6 @@
 
 import json
 import logging
-import os
 import pickle
 import shutil
 import tempfile

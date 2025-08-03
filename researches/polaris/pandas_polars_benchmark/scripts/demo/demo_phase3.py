@@ -8,7 +8,7 @@ import platform
 from pathlib import Path
 
 # Добавляем путь к src
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 
 def print_header():

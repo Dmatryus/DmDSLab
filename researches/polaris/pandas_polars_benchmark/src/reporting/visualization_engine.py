@@ -12,11 +12,8 @@ import numpy as np
 from dataclasses import dataclass
 from enum import Enum
 
+from .data_processor import ProcessedData, MetricType, AggregationLevel
 from researches.polaris.pandas_polars_benchmark.src import get_logger
-from researches.polaris.pandas_polars_benchmark.src.reporting import (
-    ProcessedData,
-    MetricType,
-)
 
 
 class ChartType(Enum):
@@ -124,16 +121,56 @@ class VisualizationEngine:
             else data.data
         )
 
-        # Определяем колонки с данными
-        if "library" in df.columns:
-            # Данные не в pivot формате
-            for library in df["library"].unique():
+        # Определяем формат данных после DataProcessor
+        # DataProcessor создает колонки вида: mean_pandas, std_pandas, mean_polars, std_polars
+        libraries = data.metadata.get("unique_values", {}).get(
+            "library", ["pandas", "polars"]
+        )
+
+        # Ищем колонки для каждой библиотеки
+        for library in libraries:
+            mean_col = f"mean_{library}"
+            std_col = f"std_{library}"
+
+            if mean_col in df.columns:
+                # Данные в формате DataProcessor (pivot с плоскими колонками)
+                x_values = (
+                    df[df.columns[0]].tolist()
+                    if df.columns[0] not in [mean_col, std_col]
+                    else df.index.tolist()
+                )
+
+                fig.add_trace(
+                    go.Bar(
+                        name=library.capitalize(),
+                        x=x_values,
+                        y=df[mean_col],
+                        error_y=(
+                            dict(
+                                type="data",
+                                array=df[std_col] if std_col in df.columns else None,
+                                visible=True,
+                            )
+                            if std_col in df.columns
+                            else None
+                        ),
+                        marker_color=ColorPalette.LIBRARIES.get(library, None),
+                        text=[f"{v:.3f}" for v in df[mean_col]],
+                        textposition="outside",
+                    )
+                )
+            elif "library" in df.columns and library in df["library"].values:
+                # Альтернативный формат с колонкой library
                 lib_data = df[df["library"] == library]
 
                 fig.add_trace(
                     go.Bar(
                         name=library.capitalize(),
-                        x=lib_data[df.columns[0]],  # Первая колонка - категория
+                        x=(
+                            lib_data[df.columns[0]]
+                            if df.columns[0] != "library"
+                            else lib_data.index
+                        ),
                         y=(
                             lib_data["mean"]
                             if "mean" in lib_data.columns
@@ -164,39 +201,6 @@ class VisualizationEngine:
                         textposition="outside",
                     )
                 )
-        else:
-            # Данные в pivot формате
-            x_values = df.index.tolist() if df.index.name else df.iloc[:, 0].tolist()
-
-            # Находим колонки для каждой библиотеки
-            for col in df.columns:
-                if isinstance(col, tuple):
-                    metric, library = col
-                    if metric == "mean":
-                        std_col = ("std", library)
-                        fig.add_trace(
-                            go.Bar(
-                                name=library.capitalize(),
-                                x=x_values,
-                                y=df[col],
-                                error_y=(
-                                    dict(
-                                        type="data",
-                                        array=(
-                                            df[std_col]
-                                            if std_col in df.columns
-                                            else None
-                                        ),
-                                        visible=True,
-                                    )
-                                    if std_col in df.columns
-                                    else None
-                                ),
-                                marker_color=ColorPalette.LIBRARIES.get(library, None),
-                                text=[f"{v:.3f}" for v in df[col]],
-                                textposition="outside",
-                            )
-                        )
 
         # Настройка layout
         fig.update_layout(
@@ -240,39 +244,73 @@ class VisualizationEngine:
 
         df = data.data
 
-        # Группируем по операциям и библиотекам
-        for operation in df["operation"].unique():
-            for library in df["library"].unique():
-                mask = (df["operation"] == operation) & (df["library"] == library)
-                op_data = df[mask]
+        # Проверяем наличие нужных колонок
+        if all(
+            col in df.columns
+            for col in ["dataset_size", "library", "operation", "mean"]
+        ):
+            # Данные в формате от prepare_timeline_data
+            for operation in df["operation"].unique():
+                for library in df["library"].unique():
+                    mask = (df["operation"] == operation) & (df["library"] == library)
+                    op_data = df[mask].sort_values("dataset_size")
 
-                if len(op_data) > 0:
-                    fig.add_trace(
-                        go.Scatter(
-                            name=f"{library.capitalize()} - {operation}",
-                            x=op_data["dataset_size"],
-                            y=op_data["mean"],
-                            error_y=(
-                                dict(type="data", array=op_data["std"], visible=True)
-                                if "std" in op_data.columns
-                                else None
-                            ),
-                            mode="lines+markers",
-                            line=dict(
-                                color=ColorPalette.LIBRARIES.get(library),
-                                dash=(
-                                    "solid"
-                                    if operation in ["read_csv", "write_csv"]
-                                    else (
-                                        "dash"
-                                        if operation in ["filter", "sort"]
-                                        else "dot"
+                    if len(op_data) > 0:
+                        fig.add_trace(
+                            go.Scatter(
+                                name=f"{library.capitalize()} - {operation}",
+                                x=op_data["dataset_size"],
+                                y=op_data["mean"],
+                                error_y=(
+                                    dict(
+                                        type="data", array=op_data["std"], visible=True
                                     )
+                                    if "std" in op_data.columns
+                                    else None
                                 ),
-                            ),
-                            marker=dict(size=8),
+                                mode="lines+markers",
+                                line=dict(
+                                    color=ColorPalette.LIBRARIES.get(library),
+                                    dash=(
+                                        "solid"
+                                        if operation in ["read_csv", "write_csv"]
+                                        else (
+                                            "dash"
+                                            if operation in ["filter", "sort"]
+                                            else "dot"
+                                        )
+                                    ),
+                                ),
+                                marker=dict(size=8),
+                            )
                         )
+        else:
+            # Альтернативный формат данных
+            self.logger.warning(
+                "Данные не содержат ожидаемые колонки для timeline графика"
+            )
+            # Попытка обработать другие форматы
+            if "library" in df.columns:
+                for library in df["library"].unique():
+                    lib_data = df[df["library"] == library]
+
+                    x_col = next(
+                        (col for col in df.columns if "size" in col.lower()),
+                        df.columns[0],
                     )
+                    y_col = self._get_metric_column(data.metric_type)
+
+                    if y_col in lib_data.columns:
+                        fig.add_trace(
+                            go.Scatter(
+                                name=library.capitalize(),
+                                x=lib_data[x_col],
+                                y=lib_data[y_col],
+                                mode="lines+markers",
+                                line=dict(color=ColorPalette.LIBRARIES.get(library)),
+                                marker=dict(size=8),
+                            )
+                        )
 
         # Настройка layout
         fig.update_layout(
@@ -319,35 +357,77 @@ class VisualizationEngine:
             horizontal_spacing=0.1,
         )
 
+        df = data.data
+
+        # Обрабатываем данные в зависимости от формата
         for i, library in enumerate(libraries):
-            # Извлекаем данные для библиотеки
-            if library in data.data:
-                z_data = data.data[library]
+            # Проверяем формат данных
+            if "library" in df.columns:
+                # Данные с колонкой library
+                lib_data = df[df["library"] == library]
+
+                # Получаем уникальные значения для строк и столбцов
+                row_vals = data.metadata.get("row_values", [])
+                col_vals = data.metadata.get("col_values", [])
+
+                # Создаем матрицу для heatmap
+                z_data = []
+                for row in row_vals:
+                    row_data = []
+                    for col in col_vals:
+                        # Ищем значение для данной комбинации
+                        mask = (
+                            (lib_data[lib_data.columns[0]] == row)
+                            if len(lib_data.columns) > 0
+                            else False
+                        )
+                        if hasattr(mask, "any") and mask.any():
+                            val = (
+                                lib_data[mask][str(col)].values[0]
+                                if str(col) in lib_data.columns
+                                else 0
+                            )
+                        else:
+                            val = 0
+                        row_data.append(val)
+                    z_data.append(row_data)
+
+                z_data = np.array(z_data)
+                x_labels = [str(x) for x in col_vals]
+                y_labels = [str(y) for y in row_vals]
             else:
-                # Фильтруем данные если они не в pivot формате
-                lib_data = (
-                    data.data[data.data["library"] == library]
-                    if "library" in data.data.columns
-                    else data.data
-                )
-                continue
+                # Данные уже в формате pivot (после DataProcessor)
+                # Ищем данные для текущей библиотеки
+                if library in str(df.index.names) or library in str(df.columns):
+                    # MultiIndex с библиотекой
+                    if hasattr(
+                        df.index, "levels"
+                    ) and library in df.index.get_level_values(0):
+                        lib_df = df.loc[library]
+                        z_data = lib_df.values
+                        x_labels = [str(x) for x in lib_df.columns]
+                        y_labels = [str(y) for y in lib_df.index]
+                    else:
+                        continue
+                else:
+                    continue
 
             # Определяем текст для hover
             hover_text = [
                 [
-                    f"{library.capitalize()}<br>Операция: {y}<br>Размер: {x}<br>Значение: {z:.3f}"
-                    for x, z in zip(z_data.columns, row)
+                    f"{library.capitalize()}<br>Операция: {y_labels[j]}<br>Размер: {x_labels[i]}<br>Значение: {z_data[j][i]:.3f}"
+                    for i in range(len(x_labels))
                 ]
-                for y, row in zip(z_data.index, z_data.values)
+                for j in range(len(y_labels))
             ]
 
             fig.add_trace(
                 go.Heatmap(
-                    z=z_data.values,
-                    x=z_data.columns.tolist(),
-                    y=z_data.index.tolist(),
+                    z=z_data,
+                    x=x_labels,
+                    y=y_labels,
                     colorscale=ColorPalette.HEATMAP_SCALE,
-                    text=z_data.values,
+                    text=z_data,
                     texttemplate="%{text:.2f}",
                     hovertext=hover_text,
                     hovertemplate="%{hovertext}<extra></extra>",
@@ -405,8 +485,9 @@ class VisualizationEngine:
 
         df = data.data
 
-        # Если данные содержат raw значения
+        # Проверяем формат данных
         if "values" in df.columns:
+            # Raw данные с индивидуальными измерениями
             for library in df["library"].unique():
                 lib_data = df[df["library"] == library]
 
@@ -425,23 +506,92 @@ class VisualizationEngine:
                         pointpos=-1.8,
                     )
                 )
-        else:
-            # Если только агрегированные данные, используем violin plot
-            for library in data.metadata.get("libraries", ["pandas", "polars"]):
-                lib_data = (
-                    df[df["library"] == library] if "library" in df.columns else df
-                )
+        elif all(
+            col in df.columns
+            for col in [
+                "library",
+                "operation",
+                self._get_metric_column(data.metric_type),
+            ]
+        ):
+            # Данные с индивидуальными измерениями
+            for library in df["library"].unique():
+                lib_data = df[df["library"] == library]
+                metric_col = self._get_metric_column(data.metric_type)
 
-                # Генерируем примерные данные на основе mean и std
+                # Группируем по операциям для box plot
+                for operation in lib_data["operation"].unique():
+                    op_data = lib_data[lib_data["operation"] == operation]
+
+                    fig.add_trace(
+                        go.Box(
+                            name=f"{library.capitalize()} - {operation}",
+                            y=op_data[metric_col],
+                            marker_color=ColorPalette.LIBRARIES.get(library),
+                            boxpoints="outliers",
+                            jitter=0.3,
+                        )
+                    )
+        else:
+            # Только агрегированные данные - используем violin plot с симулированными данными
+            libraries = data.metadata.get(
+                "libraries",
+                (
+                    df["library"].unique()
+                    if "library" in df.columns
+                    else ["pandas", "polars"]
+                ),
+            )
+
+            for library in libraries:
+                if "library" in df.columns:
+                    lib_data = df[df["library"] == library]
+                else:
+                    # Пытаемся найти данные для библиотеки в колонках
+                    mean_col = f"mean_{library}"
+                    std_col = f"std_{library}"
+
+                    if mean_col in df.columns:
+                        # Генерируем распределение на основе mean и std
+                        for idx, row in df.iterrows():
+                            operation = (
+                                row[df.columns[0]]
+                                if df.columns[0] not in [mean_col, std_col]
+                                else f"Op{idx}"
+                            )
+
+                            if (
+                                pd.notna(row[mean_col])
+                                and std_col in df.columns
+                                and pd.notna(row[std_col])
+                            ):
+                                # Генерируем нормальное распределение
+                                values = np.random.normal(
+                                    row[mean_col], row[std_col], 100
+                                )
+
+                                fig.add_trace(
+                                    go.Violin(
+                                        name=f"{library.capitalize()} - {operation}",
+                                        y=values,
+                                        box_visible=True,
+                                        meanline_visible=True,
+                                        fillcolor=ColorPalette.LIBRARIES.get(library),
+                                        opacity=0.6,
+                                        x0=operation,
+                                    )
+                                )
+                    continue
+
+                # Обработка данных с колонкой library
                 if "mean" in lib_data.columns and "std" in lib_data.columns:
                     for _, row in lib_data.iterrows():
+                        operation = (
+                            row["operation"] if "operation" in row else "Operation"
+                        )
+
                         # Генерируем нормальное распределение
                         values = np.random.normal(row["mean"], row["std"], 100)
-                        operation = (
-                            row[lib_data.columns[0]]
-                            if len(lib_data.columns) > 0
-                            else "Operation"
-                        )
 
                         fig.add_trace(
                             go.Violin(
@@ -464,7 +614,9 @@ class VisualizationEngine:
             height=config.height,
             width=config.width,
             showlegend=config.show_legend,
-            violinmode="group" if "Violin" in str(fig.data) else None,
+            violinmode=(
+                "group" if any("Violin" in str(trace) for trace in fig.data) else None
+            ),
         )
 
         if config.log_scale:
@@ -490,7 +642,7 @@ class VisualizationEngine:
                 title="Сводная таблица производительности", x_label="", y_label=""
             )
 
-        df = data.data
+        df = data.data.copy()
 
         # Подготовка данных для таблицы
         if isinstance(df.columns, pd.MultiIndex):
@@ -500,7 +652,23 @@ class VisualizationEngine:
         # Форматирование числовых значений
         for col in df.columns:
             if df[col].dtype in ["float64", "float32"]:
-                df[col] = df[col].apply(lambda x: f"{x:.3f}")
+                # Форматируем с 3 знаками после запятой
+                df[col] = df[col].map(lambda x: f"{x:.3f}" if pd.notna(x) else "")
+
+        # Переименовываем колонки для лучшей читаемости
+        column_rename = {
+            "mean_time": "Среднее время (с)",
+            "std_time": "Станд. откл. (с)",
+            "mean_memory": "Средняя память (МБ)",
+            "peak_memory": "Пиковая память (МБ)",
+            "relative_time": "Относит. время",
+            "mean_pandas": "Pandas (с)",
+            "mean_polars": "Polars (с)",
+            "std_pandas": "Pandas σ",
+            "std_polars": "Polars σ",
+        }
+
+        df = df.rename(columns=column_rename)
 
         # Создание таблицы
         fig = go.Figure(
@@ -526,7 +694,7 @@ class VisualizationEngine:
         # Настройка layout
         fig.update_layout(
             title=config.title,
-            height=config.height or min(600, 50 + len(df) * 25),
+            height=config.height or min(600, 100 + len(df) * 25),
             width=config.width,
             margin=dict(t=50, b=10, l=10, r=10),
         )
@@ -567,10 +735,25 @@ class VisualizationEngine:
         )
 
         # Определяем данные для графика
+        # После DataProcessor данные могут быть в формате mean_pandas / mean_polars
         if "speedup" in df.columns:
             x_values = df[df.columns[0]].tolist()
             y_values = df["speedup"].tolist()
+        elif "mean_pandas" in df.columns and "mean_polars" in df.columns:
+            # Рассчитываем speedup как pandas_time / polars_time
+            x_values = (
+                df[df.columns[0]].tolist()
+                if df.columns[0] not in ["mean_pandas", "mean_polars"]
+                else df.index.tolist()
+            )
+            y_values = (df["mean_pandas"] / df["mean_polars"]).tolist()
+        else:
+            # Пытаемся найти любые подходящие колонки
+            self.logger.warning("Не найдены подходящие колонки для расчета speedup")
+            x_values = []
+            y_values = []
 
+        if x_values and y_values:
             # Цвета в зависимости от того, какая библиотека быстрее
             colors = [
                 ColorPalette.POLARS if y > 1 else ColorPalette.PANDAS for y in y_values
@@ -586,9 +769,6 @@ class VisualizationEngine:
                     hovertemplate="%{x}<br>Ускорение: %{y:.2f}x<extra></extra>",
                 )
             )
-        else:
-            # Если данные в другом формате
-            self.logger.warning("Данные не содержат колонку 'speedup'")
 
         # Настройка layout
         fig.update_layout(
@@ -643,7 +823,7 @@ class VisualizationEngine:
             ),
             specs=[
                 [{"type": "bar"}, {"type": "scatter"}],
-                [{"type": "box"}, {"type": "bar"}],
+                [{"type": "violin"}, {"type": "bar"}],
             ],
             vertical_spacing=0.15,
             horizontal_spacing=0.1,
@@ -661,13 +841,17 @@ class VisualizationEngine:
         if "timeline" in processed_data_dict:
             line_fig = self.create_line_chart(processed_data_dict["timeline"])
             for trace in line_fig.data:
-                fig.add_trace(trace, row=1, col=2)
+                # Ограничиваем количество линий для читаемости
+                if len(fig.data) < 20:  # Предотвращаем перегрузку графика
+                    fig.add_trace(trace, row=1, col=2)
 
         # График 3: Распределение
         if "distribution" in processed_data_dict:
             box_fig = self.create_box_plot(processed_data_dict["distribution"])
-            for trace in box_fig.data:
-                fig.add_trace(trace, row=2, col=1)
+            # Добавляем только первые несколько трейсов для читаемости
+            for i, trace in enumerate(box_fig.data):
+                if i < 6:  # Ограничиваем количество violin plots
+                    fig.add_trace(trace, row=2, col=1)
 
         # График 4: Ускорение
         if "speedup" in processed_data_dict:
@@ -684,6 +868,22 @@ class VisualizationEngine:
                 orientation="h", yanchor="bottom", y=-0.15, xanchor="center", x=0.5
             ),
         )
+
+        # Обновление осей
+        fig.update_xaxes(title_text="Операция", row=1, col=1)
+        fig.update_yaxes(title_text="Время (сек)", row=1, col=1)
+
+        fig.update_xaxes(title_text="Размер датасета", type="log", row=1, col=2)
+        fig.update_yaxes(title_text="Время (сек)", type="log", row=1, col=2)
+
+        fig.update_xaxes(title_text="Операция", row=2, col=1)
+        fig.update_yaxes(title_text="Время (сек)", row=2, col=1)
+
+        fig.update_xaxes(title_text="Операция", row=2, col=2)
+        fig.update_yaxes(title_text="Ускорение (раз)", row=2, col=2)
+
+        # Добавляем линию базового уровня для speedup
+        fig.add_hline(y=1, line_dash="dash", line_color="gray", row=2, col=2)
 
         return fig
 

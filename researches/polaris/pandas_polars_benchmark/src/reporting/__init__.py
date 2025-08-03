@@ -9,9 +9,23 @@ from .data_processor import (
     MetricType
 )
 
+from .visualization_engine import (
+    VisualizationEngine,
+    ChartConfig,
+    ChartType,
+    ColorPalette
+)
+
 __all__ = [
+    # Data processing
     "DataProcessor",
     "ProcessedData", 
     "AggregationLevel",
-    "MetricType"
+    "MetricType",
+    
+    # Visualization
+    "VisualizationEngine",
+    "ChartConfig",
+    "ChartType", 
+    "ColorPalette"
 ]

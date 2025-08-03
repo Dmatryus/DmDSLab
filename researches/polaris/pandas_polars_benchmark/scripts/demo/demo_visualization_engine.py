@@ -8,15 +8,19 @@ import os
 import sys
 from pathlib import Path
 
-from researches.polaris.pandas_polars_benchmark.src import get_logger
-
 # Добавляем путь к src в PYTHONPATH
 sys.path.insert(
     0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 )
 
-from reporting.data_processor import DataProcessor, MetricType, ProcessedData
+from reporting.data_processor import (
+    DataProcessor,
+    MetricType,
+    ProcessedData,
+    AggregationLevel,
+)
 from reporting.visualization_engine import VisualizationEngine, ChartConfig, ChartType
+from utils import setup_logging, get_logger
 
 # Импортируем функцию создания примерных данных из demo_data_processor
 from demo_data_processor import create_sample_results
@@ -215,7 +219,7 @@ def demonstrate_performance_table():
     summary_data = ProcessedData(
         data=summary_df,
         metadata={"total_records": len(df)},
-        aggregation_level=processor.AggregationLevel.OPERATION,
+        aggregation_level=AggregationLevel.OPERATION,
         metric_type=MetricType.EXECUTION_TIME,
     )
 
@@ -293,7 +297,7 @@ def demonstrate_dashboard():
         "distribution": ProcessedData(
             data=df,
             metadata={"libraries": ["pandas", "polars"]},
-            aggregation_level=processor.AggregationLevel.OPERATION,
+            aggregation_level=AggregationLevel.OPERATION,
             metric_type=MetricType.EXECUTION_TIME,
         ),
         "speedup": processor.prepare_comparison_data(
@@ -319,8 +323,6 @@ def demonstrate_dashboard():
 
 
 def main():
-    """Основная функция для запуска всех демонстраций."""
-    # Настройка логирования
 
     # Запуск всех демонстраций
     demonstrate_bar_charts()

@@ -49,7 +49,7 @@ def create_project_structure() -> bool:
             "analysis": [
                 "__init__.py",
                 "statistical.py",
-                "outliers.py",
+                "outlier_detector.py",
                 "comparisons.py",
             ],
             "reporting": [

@@ -6,7 +6,7 @@ from typing import Optional, Union, List, Dict, Any
 import pandas as pd
 import polars as pl
 
-from researches.polaris.pandas_polars_benchmark.src.operations.base import (
+from operations.base import (
     DataAwareOperation, OperationResult, register_operation
 )
 

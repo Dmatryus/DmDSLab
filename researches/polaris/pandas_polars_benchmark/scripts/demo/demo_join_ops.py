@@ -7,7 +7,12 @@ import sys
 from pathlib import Path
 
 # Добавляем путь к src
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+src_path = Path(__file__).parent.parent.parent / "src"
+sys.path.insert(0, str(src_path))
+
+# Добавляем корневой путь проекта для абсолютных импортов
+project_root = Path(__file__).parent.parent.parent.parent.parent.parent
+sys.path.insert(0, str(project_root))
 
 import pandas as pd
 import polars as pl
@@ -15,8 +20,19 @@ import numpy as np
 import time
 
 from utils import setup_logging
-from operations import get_operation, get_operations_by_category
+from operations import get_operation, get_operations_by_category, get_all_operations
 from profiling import get_profiler, ProfilingConfig
+
+# Явно импортируем модули операций чтобы они зарегистрировались
+try:
+    from operations import join_ops, groupby_ops, sort_ops
+except ImportError as e:
+    print(f"Ошибка импорта модулей операций: {e}")
+    print("Попытка прямого импорта...")
+    # Альтернативный способ импорта
+    import operations.join_ops
+    import operations.groupby_ops  
+    import operations.sort_ops
 
 
 def create_test_data(n_rows: int = 10000):
@@ -49,6 +65,14 @@ def demonstrate_join_operations():
     logger.info("ДЕМОНСТРАЦИЯ JOIN ОПЕРАЦИЙ")
     logger.info("=" * 80)
     
+    # Отладка: проверяем, какие операции зарегистрированы
+    logger.info("\n🔍 Проверка зарегистрированных операций:")
+    all_ops = get_all_operations()
+    for category, ops_list in all_ops.items():
+        logger.info(f"  {category}: {len(ops_list)} операций")
+        for op in ops_list:
+            logger.info(f"    - {op.name}")
+    
     # 1. Подготовка данных
     logger.phase_start("Подготовка данных")
     
@@ -66,6 +90,11 @@ def demonstrate_join_operations():
     
     join_operations = get_operations_by_category('join')
     logger.info(f"Найдено Join операций: {len(join_operations)}")
+    
+    if len(join_operations) == 0:
+        logger.error("❌ Join операции не зарегистрированы!")
+        logger.error("Проверьте импорт модуля join_ops")
+        return
     
     for operation in join_operations:
         logger.info(f"\n{'='*60}")
@@ -125,87 +154,75 @@ def demonstrate_join_operations():
     
     logger.phase_end("Тестирование Join операций")
     
-    # 3. Детальный анализ производительности
-    logger.phase_start("Анализ производительности")
+    # 3. Бенчмарк с профилировщиком
+    logger.phase_start("Бенчмарк производительности")
     
-    # Тестируем inner join на разных размерах
-    sizes = [1000, 5000, 10000, 20000]
-    inner_join = get_operation('inner_join', 'join')
+    # Создаем больший датасет для тестирования
+    logger.info("\nСоздаем датасет большего размера для бенчмарка...")
+    df_bench_pd, df_bench_pl = create_test_data(50000)
     
-    profiling_config = ProfilingConfig(
+    # Настройка профилировщика
+    config = ProfilingConfig(
         min_runs=3,
-        max_runs=5,
-        target_cv=0.20,
-        isolate_process=False
+        max_runs=10,
+        target_cv=0.05,
+        memory_sampling_interval=0.01,
+        warmup_runs=1
     )
     
-    results = []
+    profiler = get_profiler(config)
     
-    logger.info("\n📈 Масштабируемость Inner Join:")
+    # Тестируем inner join
+    inner_join_op = get_operation('inner_join', 'join')
     
-    with get_profiler(profiling_config) as profiler:
-        for size in sizes:
-            logger.info(f"\nРазмер данных: {size:,} строк")
-            
-            # Создаем данные
-            df_pd, df_pl = create_test_data(size)
-            
-            # Профилируем Pandas
-            result_pd = profiler.profile_operation(
-                lambda: inner_join.execute_pandas(df_pd),
-                operation_name=f"inner_join_{size}",
-                library='pandas',
-                dataset_size=size
-            )
-            
-            # Профилируем Polars
-            result_pl = profiler.profile_operation(
-                lambda: inner_join.execute_polars(df_pl),
-                operation_name=f"inner_join_{size}",
-                library='polars',
-                dataset_size=size
-            )
-            
-            if result_pd.success and result_pl.success:
-                speedup = result_pd.mean_time / result_pl.mean_time
-                logger.info(f"  Pandas: {result_pd.mean_time:.3f}с, Polars: {result_pl.mean_time:.3f}с")
-                logger.info(f"  Ускорение: {speedup:.1f}x")
-                
-                results.append({
-                    'size': size,
-                    'pandas_time': result_pd.mean_time,
-                    'polars_time': result_pl.mean_time,
-                    'speedup': speedup
-                })
+    logger.info("\n📊 Профилирование Inner Join:")
     
-    # График ускорения
-    if results:
-        logger.info("\n📊 Сводка по масштабируемости:")
-        logger.info("-" * 60)
-        logger.info(f"{'Размер':<10} {'Pandas (с)':<12} {'Polars (с)':<12} {'Ускорение':<10}")
-        logger.info("-" * 60)
-        
-        for r in results:
-            logger.info(
-                f"{r['size']:<10} "
-                f"{r['pandas_time']:<12.3f} "
-                f"{r['polars_time']:<12.3f} "
-                f"{r['speedup']:<10.1f}x"
-            )
-        
-        # Анализ роста ускорения
-        speedups = [r['speedup'] for r in results]
-        if len(speedups) > 1:
-            speedup_growth = (speedups[-1] - speedups[0]) / speedups[0] * 100
-            logger.info(f"\nРост ускорения: {speedup_growth:+.1f}% с увеличением размера данных")
+    # Pandas
+    logger.info("  Pandas...")
+    result_pd = profiler.profile_operation(
+        inner_join_op, 
+        df_bench_pd,
+        library='pandas'
+    )
+    if result_pd.success:
+        logger.info(f"    Время: {result_pd.execution_time_mean:.3f}с ± {result_pd.execution_time_std:.3f}с")
+        logger.info(f"    Память (пик): {result_pd.memory_peak_mb:.1f} MB")
+        logger.info(f"    CV: {result_pd.cv:.3f}")
     
-    logger.phase_end("Анализ производительности")
+    # Polars
+    logger.info("  Polars...")
+    result_pl = profiler.profile_operation(
+        inner_join_op,
+        df_bench_pl,
+        library='polars'
+    )
+    if result_pl.success:
+        logger.info(f"    Время: {result_pl.execution_time_mean:.3f}с ± {result_pl.execution_time_std:.3f}с")
+        logger.info(f"    Память (пик): {result_pl.memory_peak_mb:.1f} MB")
+        logger.info(f"    CV: {result_pl.cv:.3f}")
+    
+    if result_pd.success and result_pl.success:
+        speedup = result_pd.execution_time_mean / result_pl.execution_time_mean
+        memory_ratio = result_pl.memory_peak_mb / result_pd.memory_peak_mb
+        logger.info(f"\n  🚀 Polars быстрее в {speedup:.1f}x раз")
+        logger.info(f"  💾 Polars использует {memory_ratio:.1%} от памяти Pandas")
+    
+    logger.phase_end("Бенчмарк производительности")
     
     # 4. Практические примеры
     logger.phase_start("Практические примеры")
     
     # Пример 1: Join с фильтрацией
     logger.info("\n📝 Пример 1: Inner join только для определенного региона")
+    
+    # Получаем операцию inner join
+    inner_join = get_operation('inner_join', 'join')
+    
+    if inner_join is None:
+        logger.error("❌ Операция inner_join не найдена!")
+        logger.info("Пропускаем практические примеры...")
+        logger.phase_end("Практические примеры")
+        return
     
     # Фильтруем перед join
     df_north_pd = df_pandas[df_pandas['region'] == 'North']

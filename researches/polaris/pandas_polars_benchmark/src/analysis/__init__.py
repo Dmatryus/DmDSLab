@@ -16,6 +16,15 @@ from .statistics_calculator import (
     format_stats_report,
 )
 
+from .comparison_engine import (
+    ComparisonEngine,
+    ComparisonMetric,
+    SignificanceLevel,
+    ComparisonResult,
+    ComparisonMatrix,
+    format_comparison_report,
+)
+
 __all__ = [
     # Outlier detection
     "OutlierDetector",
@@ -28,4 +37,12 @@ __all__ = [
     "DescriptiveStats",
     "NormalityTest",
     "format_stats_report",
+    
+    # Comparison engine
+    "ComparisonEngine",
+    "ComparisonMetric",
+    "SignificanceLevel",
+    "ComparisonResult",
+    "ComparisonMatrix",
+    "format_comparison_report",
 ]

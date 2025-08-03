@@ -537,7 +537,6 @@ class BenchmarkRunner:
         # Подготовка данных для различных графиков
         comparison_data = processor.prepare_comparison_data(
             df=results_df,
-            metric=MetricType.EXECUTION_TIME,
             groupby=["operation"],
             pivot_column="library",
         )

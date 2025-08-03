@@ -1,31 +1,35 @@
 """
-Основные компоненты системы бенчмаркинга.
+Core модуль системы бенчмаркинга.
+Содержит основные компоненты для управления выполнением.
 """
 
-from .config import (
-    Config,
-    DataGenerationConfig,
-    ProfilingConfig,
-    ReportingConfig,
-    LibraryConfig,
-)
-from .config_schema import ConfigSchema
-from .checkpoint import CheckpointManager, BenchmarkState, TaskIdentifier
-from .progress import ProgressTracker, create_progress_tracker
+from researches.polaris.pandas_polars_benchmark.src.core.config import Config, LibraryConfig
+from researches.polaris.pandas_polars_benchmark.src.core.config_schema import ConfigSchema, ValidationError
+from researches.polaris.pandas_polars_benchmark.src.core.checkpoint import CheckpointManager, BenchmarkState
+from researches.polaris.pandas_polars_benchmark.src.core.progress import ProgressTracker, OperationTiming, create_progress_tracker
+from researches.polaris.pandas_polars_benchmark.src.core.benchmark_runner import BenchmarkRunner, BenchmarkTask, create_benchmark_runner
 
 __all__ = [
-    # Конфигурация
-    "Config",
-    "DataGenerationConfig",
-    "ProfilingConfig",
-    "ReportingConfig",
-    "LibraryConfig",
-    "ConfigSchema",
-    # Управление состоянием
-    "CheckpointManager",
-    "BenchmarkState",
-    "TaskIdentifier",
-    # Отслеживание прогресса
-    "ProgressTracker",
-    "create_progress_tracker",
+    # Configuration
+    'Config',
+    'LibraryConfig',
+    'ConfigSchema',
+    'ValidationError',
+    
+    # Checkpoint management
+    'CheckpointManager',
+    'BenchmarkState',
+    
+    # Progress tracking
+    'ProgressTracker',
+    'OperationTiming',
+    'create_progress_tracker',
+    
+    # Main runner
+    'BenchmarkRunner',
+    'BenchmarkTask',
+    'create_benchmark_runner',
 ]
+
+# Версия модуля
+__version__ = '1.0.0'

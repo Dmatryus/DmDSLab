@@ -11,7 +11,7 @@ from enum import Enum
 import json
 from pathlib import Path
 
-from researches.polaris.pandas_polars_benchmark.src import get_logger
+from researches.polaris.pandas_polars_benchmark.src.utils.logging import get_logger
 
 
 class AggregationLevel(Enum):

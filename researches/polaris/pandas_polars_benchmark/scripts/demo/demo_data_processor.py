@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+
+# Добавляем путь к src для импортов
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+
 """
 Демонстрация работы процессора данных для подготовки к визуализации.
 """
@@ -18,7 +24,7 @@ from src.reporting.data_processor import (
     AggregationLevel,
     ProcessedData
 )
-from src import get_logger
+from utils.logging import get_logger
 
 
 def create_sample_results():

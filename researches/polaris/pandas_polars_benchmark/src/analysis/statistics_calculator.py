@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from scipy import stats
 import warnings
 
-from researches.polaris.pandas_polars_benchmark.src import get_logger
+from researches.polaris.pandas_polars_benchmark.src.utils.logging import get_logger
 
 
 @dataclass

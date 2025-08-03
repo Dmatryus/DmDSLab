@@ -16,6 +16,12 @@ from .visualization_engine import (
     ColorPalette
 )
 
+from .html_renderer import (
+    HTMLRenderer,
+    ReportConfig,
+    ReportSection
+)
+
 __all__ = [
     # Data processing
     "DataProcessor",
@@ -27,5 +33,10 @@ __all__ = [
     "VisualizationEngine",
     "ChartConfig",
     "ChartType", 
-    "ColorPalette"
+    "ColorPalette",
+    
+    # HTML rendering
+    "HTMLRenderer",
+    "ReportConfig",
+    "ReportSection"
 ]

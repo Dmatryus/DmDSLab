@@ -392,8 +392,9 @@ class BenchmarkRunner:
 
         try:
             # Получение операции из реестра
-            operation = self.operation_registry.get_operation(
-                task.operation_category, task.operation_name
+            # ИСПРАВЛЕНО: использование метода get вместо get_operation
+            operation = self.operation_registry.get(
+                task.operation_name, task.operation_category
             )
 
             if not operation:

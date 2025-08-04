@@ -115,35 +115,75 @@ class DataProcessor:
         return df
 
     def prepare_comparison_data(
-        self, df, groupby=None, pivot_column="library", metric_column="duration"
-    ):
+        self,
+        df: pd.DataFrame,
+        metric: Optional[MetricType] = None,
+        groupby: Optional[List[str]] = None,
+        pivot_column: str = "library",
+        metric_column: Optional[str] = None,
+    ) -> ProcessedData:
         """
-        Подготавливает данные для сравнения библиотек.
+        Подготовка данных для сравнительных графиков.
 
         Args:
-            df: DataFrame с результатами бенчмарков
-            groupby: список колонок для группировки (по умолчанию ['operation'])
-            pivot_column: колонка для пивота (по умолчанию 'library')
-            metric_column: колонка с метрикой (по умолчанию 'duration')
+            df: DataFrame с результатами
+            metric: Тип метрики (если указан, используется для получения названия колонки)
+            groupby: Список колонок для группировки
+            pivot_column: Колонка для пивота
+            metric_column: Название колонки с метрикой (если не указано, определяется автоматически)
 
         Returns:
-            dict: Словарь с подготовленными данными для визуализации
+            ProcessedData: Обработанные данные для визуализации
         """
-        if groupby is None:
-            # Определяем доступные колонки для группировки
-            available_columns = df.columns.tolist()
+        # Определение колонки с метрикой
+        if metric_column is None:
+            if metric is not None:
+                # Используем тип метрики для определения колонки
+                metric_column = self._get_metric_column(metric)
+            else:
+                # По умолчанию используем "duration" или первую числовую колонку
+                if "duration" in df.columns:
+                    metric_column = "duration"
+                elif "execution_time" in df.columns:
+                    metric_column = "execution_time"
+                else:
+                    # Ищем первую числовую колонку
+                    numeric_columns = df.select_dtypes(
+                        include=[np.number]
+                    ).columns.tolist()
+                    # Исключаем колонки, которые не являются метриками
+                    metric_candidates = [
+                        col
+                        for col in numeric_columns
+                        if col not in ["dataset_size", "memory_peak", "memory_mean"]
+                    ]
+                    if metric_candidates:
+                        metric_column = metric_candidates[0]
+                    else:
+                        raise ValueError("Не удалось определить колонку с метрикой")
 
-            # Приоритетный список колонок для группировки
+        # Определение метрики, если не указана
+        if metric is None:
+            if metric_column in ["duration", "execution_time"]:
+                metric = MetricType.EXECUTION_TIME
+            elif metric_column in ["memory_usage", "memory_mean"]:
+                metric = MetricType.MEMORY_USAGE
+            elif metric_column == "memory_peak":
+                metric = MetricType.MEMORY_PEAK
+            else:
+                metric = MetricType.EXECUTION_TIME
+
+        # Определение колонок для группировки
+        if groupby is None:
+            available_columns = df.columns.tolist()
             possible_groupby_columns = ["operation", "test_name", "name", "function"]
 
-            # Выбираем первую доступную колонку из списка
             groupby = []
             for col in possible_groupby_columns:
                 if col in available_columns:
                     groupby = [col]
                     break
 
-            # Если не нашли подходящую колонку, используем первую не-метрическую колонку
             if not groupby:
                 for col in available_columns:
                     if col not in [
@@ -152,16 +192,18 @@ class DataProcessor:
                         "duration",
                         "memory",
                         "iterations",
+                        "dataset_size",
                     ]:
                         groupby = [col]
                         break
 
             if not groupby:
                 raise ValueError(
-                    f"Не удалось найти подходящую колонку для группировки. Доступные колонки: {available_columns}"
+                    f"Не удалось найти подходящую колонку для группировки. "
+                    f"Доступные колонки: {available_columns}"
                 )
 
-        # Проверяем наличие всех необходимых колонок
+        # Проверка наличия всех необходимых колонок
         required_columns = groupby + [pivot_column, metric_column]
         missing_columns = [col for col in required_columns if col not in df.columns]
 
@@ -175,21 +217,41 @@ class DataProcessor:
         # Группировка и агрегация
         grouped = (
             df.groupby(groupby + [pivot_column])[metric_column]
-            .agg(["mean", "std"])
+            .agg(["mean", "std", "count"])
             .reset_index()
         )
 
-        # Подготовка данных для визуализации
-        comparison_data = {
-            "grouped_data": grouped,
+        # Создание pivot таблицы
+        pivot_data = grouped.pivot_table(
+            index=groupby,
+            columns=pivot_column,
+            values=["mean", "std", "count"],
+            fill_value=0,
+        )
+
+        # Расчет дополнительных метрик
+        if metric == MetricType.SPEEDUP:
+            pivot_data = self._calculate_speedup(pivot_data)
+        elif metric == MetricType.RELATIVE_PERFORMANCE:
+            pivot_data = self._calculate_relative_performance(pivot_data)
+
+        # Подготовка метаданных
+        metadata = {
             "groupby_columns": groupby,
             "pivot_column": pivot_column,
             "metric_column": metric_column,
-            "operations": grouped[groupby[0]].unique() if groupby else [],
-            "libraries": grouped[pivot_column].unique(),
+            "total_records": len(df),
+            "unique_values": {
+                col: df[col].unique().tolist() for col in groupby + [pivot_column]
+            },
         }
 
-        return comparison_data
+        return ProcessedData(
+            data=pivot_data.reset_index(),
+            metadata=metadata,
+            aggregation_level=AggregationLevel.OPERATION,
+            metric_type=metric,
+        )
 
     def prepare_distribution_data(
         self,

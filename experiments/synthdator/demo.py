@@ -1,5 +1,6 @@
 """Demo script для тестирования Synthdator."""
 
+import logging
 import os
 import tempfile
 
@@ -7,12 +8,19 @@ import duckdb
 
 from generator import GeneratorConfig, PipelineFactory
 
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
 
 def demo_regression():
     """Демо: регрессия с числовыми фичами."""
-    print("=" * 60)
-    print("Demo: Regression task")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("Demo: Regression task")
+    logger.info("=" * 60)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         config = GeneratorConfig(
@@ -29,25 +37,25 @@ def demo_regression():
         factory = PipelineFactory()
         pipeline = factory.create(config)
 
-        print(f"Steps: {[type(s).__name__ for s in pipeline.steps]}")
+        logger.info("Steps: %s", [type(s).__name__ for s in pipeline.steps])
 
         meta = pipeline.run()
 
-        print(f"Rows: {meta.row_count}")
-        print(f"Columns: {list(meta.columns.keys())}")
-        print(f"File size: {os.path.getsize(meta.file_path) / 1024:.1f} KB")
+        logger.info("Rows: %d", meta.row_count)
+        logger.info("Columns: %s", list(meta.columns.keys()))
+        logger.info("File size: %.1f KB", os.path.getsize(meta.file_path) / 1024)
 
         # Проверяем данные
         with duckdb.connect() as db:
             sample = db.execute(f"SELECT * FROM '{meta.file_path}' LIMIT 5").fetchdf()
-            print(f"\nSample:\n{sample}")
+            logger.info("Sample:\n%s", sample)
 
 
 def demo_binary_classification():
     """Демо: бинарная классификация с категориями."""
-    print("\n" + "=" * 60)
-    print("Demo: Binary classification with categories")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("Demo: Binary classification with categories")
+    logger.info("=" * 60)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         config = GeneratorConfig(
@@ -64,27 +72,27 @@ def demo_binary_classification():
         factory = PipelineFactory()
         pipeline = factory.create(config)
 
-        print(f"Steps: {[type(s).__name__ for s in pipeline.steps]}")
+        logger.info("Steps: %s", [type(s).__name__ for s in pipeline.steps])
 
         meta = pipeline.run()
 
-        print(f"Rows: {meta.row_count}")
-        print(f"Columns: {list(meta.columns.keys())}")
-        print(f"File size: {os.path.getsize(meta.file_path) / 1024:.1f} KB")
+        logger.info("Rows: %d", meta.row_count)
+        logger.info("Columns: %s", list(meta.columns.keys()))
+        logger.info("File size: %.1f KB", os.path.getsize(meta.file_path) / 1024)
 
         # Проверяем распределение классов
         with duckdb.connect() as db:
             dist = db.execute(
                 f"SELECT target_bin, COUNT(*) as cnt FROM '{meta.file_path}' GROUP BY 1"
             ).fetchdf()
-            print(f"\nClass distribution:\n{dist}")
+            logger.info("Class distribution:\n%s", dist)
 
 
 def demo_multiclass():
     """Демо: многоклассовая классификация."""
-    print("\n" + "=" * 60)
-    print("Demo: Multiclass classification")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("Demo: Multiclass classification")
+    logger.info("=" * 60)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         config = GeneratorConfig(
@@ -100,26 +108,26 @@ def demo_multiclass():
         factory = PipelineFactory()
         pipeline = factory.create(config)
 
-        print(f"Steps: {[type(s).__name__ for s in pipeline.steps]}")
+        logger.info("Steps: %s", [type(s).__name__ for s in pipeline.steps])
 
         meta = pipeline.run()
 
-        print(f"Rows: {meta.row_count}")
-        print(f"Columns: {list(meta.columns.keys())}")
+        logger.info("Rows: %d", meta.row_count)
+        logger.info("Columns: %s", list(meta.columns.keys()))
 
         # Проверяем распределение классов
         with duckdb.connect() as db:
             dist = db.execute(
                 f"SELECT target_multi, COUNT(*) as cnt FROM '{meta.file_path}' GROUP BY 1 ORDER BY 1"
             ).fetchdf()
-            print(f"\nClass distribution:\n{dist}")
+            logger.info("Class distribution:\n%s", dist)
 
 
 def demo_ranking():
     """Демо: задача ранжирования."""
-    print("\n" + "=" * 60)
-    print("Demo: Ranking task")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("Demo: Ranking task")
+    logger.info("=" * 60)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         config = GeneratorConfig(
@@ -136,26 +144,26 @@ def demo_ranking():
         factory = PipelineFactory()
         pipeline = factory.create(config)
 
-        print(f"Steps: {[type(s).__name__ for s in pipeline.steps]}")
+        logger.info("Steps: %s", [type(s).__name__ for s in pipeline.steps])
 
         meta = pipeline.run()
 
-        print(f"Rows: {meta.row_count}")
-        print(f"Columns: {list(meta.columns.keys())}")
+        logger.info("Rows: %d", meta.row_count)
+        logger.info("Columns: %s", list(meta.columns.keys()))
 
         # Проверяем распределение рангов
         with duckdb.connect() as db:
             dist = db.execute(
                 f"SELECT target_rank, COUNT(*) as cnt FROM '{meta.file_path}' GROUP BY 1 ORDER BY 1"
             ).fetchdf()
-            print(f"\nRank distribution:\n{dist}")
+            logger.info("Rank distribution:\n%s", dist)
 
 
 def demo_full_featured():
     """Демо: все фичи включены."""
-    print("\n" + "=" * 60)
-    print("Demo: Full featured dataset")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("Demo: Full featured dataset")
+    logger.info("=" * 60)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         config = GeneratorConfig(
@@ -179,18 +187,18 @@ def demo_full_featured():
         factory = PipelineFactory()
         pipeline = factory.create(config)
 
-        print(f"Steps: {[type(s).__name__ for s in pipeline.steps]}")
+        logger.info("Steps: %s", [type(s).__name__ for s in pipeline.steps])
 
         meta = pipeline.run()
 
-        print(f"Rows: {meta.row_count}")
-        print(f"Columns ({len(meta.columns)}): {list(meta.columns.keys())}")
-        print(f"File size: {os.path.getsize(meta.file_path) / 1024:.1f} KB")
+        logger.info("Rows: %d", meta.row_count)
+        logger.info("Columns (%d): %s", len(meta.columns), list(meta.columns.keys()))
+        logger.info("File size: %.1f KB", os.path.getsize(meta.file_path) / 1024)
 
         # Проверяем данные
         with duckdb.connect() as db:
             sample = db.execute(f"SELECT * FROM '{meta.file_path}' LIMIT 3").fetchdf()
-            print(f"\nSample:\n{sample.to_string()}")
+            logger.info("Sample:\n%s", sample.to_string())
 
             # Проверяем NULL
             null_counts = db.execute(f"""
@@ -199,7 +207,7 @@ def demo_full_featured():
                     SUM(CASE WHEN numeric_1 IS NULL THEN 1 ELSE 0 END) as numeric_1_nulls
                 FROM '{meta.file_path}'
             """).fetchdf()
-            print(f"\nNULL counts:\n{null_counts}")
+            logger.info("NULL counts:\n%s", null_counts)
 
 
 if __name__ == "__main__":
@@ -209,6 +217,6 @@ if __name__ == "__main__":
     demo_ranking()
     demo_full_featured()
 
-    print("\n" + "=" * 60)
-    print("All demos completed!")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("All demos completed!")
+    logger.info("=" * 60)

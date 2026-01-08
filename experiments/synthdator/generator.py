@@ -28,6 +28,21 @@ MIN_ROW_COUNT = 100
 # Математические константы
 EPSILON = 1e-10  # Защита от деления на ноль
 
+
+def _normalize_to_unit(arr: np.ndarray, axis: int | None = 0) -> np.ndarray:
+    """Нормализует массив в диапазон [0, 1].
+
+    Args:
+        arr: Входной массив.
+        axis: Ось для вычисления min/max. None для всего массива.
+
+    Returns:
+        Нормализованный массив в диапазоне [0, 1].
+    """
+    arr_min = arr.min(axis=axis, keepdims=True) if axis is not None else arr.min()
+    arr_max = arr.max(axis=axis, keepdims=True) if axis is not None else arr.max()
+    return (arr - arr_min) / (arr_max - arr_min + EPSILON)
+
 # Коэффициенты для генерации таргетов
 COEF_SQUARED_SCALE = 0.5  # Масштаб квадратичных членов в polynomial
 COEF_INTERACTION_SCALE = 0.3  # Масштаб взаимодействий в polynomial
@@ -51,6 +66,13 @@ FRIEDMAN_X3_SCALE = 10
 RBF_MAX_CENTERS = 5
 RBF_VARIANCE_DIVISOR = 2
 
+# Параметры KMeans
+DEFAULT_KMEANS_N_INIT = 10
+
+# Защита от edge case в ранжировании: PERCENT_RANK()=1.0 даст n_levels,
+# что выходит за диапазон [0, n_levels-1]
+PERCENT_RANK_EPSILON = 0.001
+
 # Параметры генерации таргетов
 MAX_INTERACTION_PAIRS = 3  # Макс. пар взаимодействий в polynomial
 MAX_SIN_FEATURES = 3  # Макс. фич для sin в nonlinear
@@ -73,7 +95,28 @@ def _atomic_write(db: duckdb.DuckDBPyConnection, query: str, file_path: str) -> 
 
 @dataclass
 class GeneratorConfig:
-    """Конфигурация генератора."""
+    """Конфигурация генератора синтетических данных.
+
+    Attributes:
+        target_size: Целевой размер файла (например, "100MB", "1GB").
+        output_path: Директория для сохранения результатов.
+        seed: Seed для воспроизводимости. None для случайной генерации.
+        n_numeric: Количество числовых фич.
+        informative_ratio: Доля информативных фич (0-1).
+        n_categories: Количество категориальных колонок.
+        category_cardinality: Количество уникальных значений в категории.
+        category_method: Метод генерации категорий ("kmeans" или "quantile").
+        task: Тип ML-задачи ("regression", "binary", "multiclass", "ranking").
+        target_method: Метод генерации целевой переменной.
+        target_noise: Уровень шума в таргете (0-1).
+        n_classes: Количество классов для multiclass.
+        with_datetime: Генерировать ли колонку timestamp.
+        datetime_start: Начальная дата для timestamp.
+        datetime_end: Конечная дата для timestamp.
+        with_date: Генерировать ли колонку date из timestamp.
+        n_booleans: Количество boolean колонок.
+        nullable_ratio: Доля NULL значений (0-1).
+    """
 
     target_size: str
     output_path: str
@@ -170,10 +213,27 @@ class GeneratorConfig:
                 f"'regression'. Используйте один из: {sorted(regression_methods)}"
             )
 
+        if self.task == "multiclass" and self.target_method in classification_methods:
+            raise ValueError(
+                f"target_method '{self.target_method}' не поддерживается для задачи "
+                f"'multiclass'. Используйте один из: {sorted(regression_methods)}"
+            )
+
 
 @dataclass
 class Meta:
-    """Метаинформация о состоянии данных."""
+    """Метаинформация о состоянии данных.
+
+    Хранит информацию о текущем состоянии сгенерированного датасета,
+    включая схему колонок, теги и прогресс выполнения pipeline.
+
+    Attributes:
+        file_path: Путь к файлу main.parquet.
+        row_count: Количество строк в датасете.
+        columns: Словарь {имя_колонки: тип_данных}.
+        column_tags: Словарь {имя_колонки: список_тегов}.
+        completed_steps: Список имён выполненных шагов pipeline.
+    """
 
     file_path: str
     row_count: int = 0
@@ -447,7 +507,7 @@ class Category(Transformer):
         kmeans = MiniBatchKMeans(
             n_clusters=self.cardinality,
             random_state=self.seed,
-            n_init=10,
+            n_init=DEFAULT_KMEANS_N_INIT,
         )
         kmeans.fit(sample_array)
 
@@ -652,9 +712,7 @@ class TargetGeneratorMixin:
         n_features = features.shape[1]
 
         # Нормализуем фичи в [0, 1] для соответствия оригинальной формуле
-        f_norm = (features - features.min(axis=0)) / (
-            features.max(axis=0) - features.min(axis=0) + EPSILON
-        )
+        f_norm = _normalize_to_unit(features, axis=0)
 
         y = np.zeros(features.shape[0])
 
@@ -686,9 +744,7 @@ class TargetGeneratorMixin:
             return self._generate_linear(features, rng)
 
         # Масштабируем как в оригинале: x0 in [0,100], x1 in [40π, 560π], x2 in [0,1], x3 in [1,11]
-        f = features.copy()
-        f_min, f_max = f.min(axis=0), f.max(axis=0)
-        f_norm = (f - f_min) / (f_max - f_min + EPSILON)
+        f_norm = _normalize_to_unit(features, axis=0)
 
         x0 = f_norm[:, 0] * FRIEDMAN_X0_MAX
         x1 = FRIEDMAN_X1_START + f_norm[:, 1] * FRIEDMAN_X1_SCALE
@@ -717,9 +773,7 @@ class TargetGeneratorMixin:
         if n_features < 4:
             return self._generate_linear(features, rng)
 
-        f = features.copy()
-        f_min, f_max = f.min(axis=0), f.max(axis=0)
-        f_norm = (f - f_min) / (f_max - f_min + EPSILON)
+        f_norm = _normalize_to_unit(features, axis=0)
 
         x0 = f_norm[:, 0] * FRIEDMAN_X0_MAX + EPSILON  # Защита от деления на ноль
         x1 = FRIEDMAN_X1_START + f_norm[:, 1] * FRIEDMAN_X1_SCALE
@@ -1039,7 +1093,7 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
         Returns:
             Бинарные метки.
         """
-        # Нормализуем первые 2 фичи
+        # Нормализуем первые 2 фичи (z-score нормализация)
         f = (
             features[:, :2]
             if features.shape[1] >= 2
@@ -1088,7 +1142,11 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
         Returns:
             Бинарные метки.
         """
-        kmeans = MiniBatchKMeans(n_clusters=2, random_state=self.seed, n_init="auto")
+        # Используем rng для генерации seed, чтобы соответствовать контракту интерфейса
+        random_state = int(rng.integers(0, 2**31))
+        kmeans = MiniBatchKMeans(
+            n_clusters=2, random_state=random_state, n_init=DEFAULT_KMEANS_N_INIT
+        )
         return kmeans.fit_predict(features).astype(np.int8)
 
     def transform(self, db: duckdb.DuckDBPyConnection, meta: Meta) -> Meta:
@@ -1325,7 +1383,7 @@ class RankingTarget(Transformer):
                         PERCENT_RANK() OVER (
                             PARTITION BY {query_col}
                             ORDER BY target_reg
-                        ) * {self.n_levels - 0.001}
+                        ) * {self.n_levels - PERCENT_RANK_EPSILON}
                     ) AS INT8
                 ) AS target_rank
             FROM '{meta.file_path}' AS m
@@ -1406,16 +1464,12 @@ class Datetime(Transformer):
         ids = data["id"]
 
         # Нормализуем в [0, 1]
-        target_norm = (target - target.min()) / (target.max() - target.min() + EPSILON)
-        feature_norm = (feature - feature.min()) / (
-            feature.max() - feature.min() + EPSILON
-        )
+        target_norm = _normalize_to_unit(target, axis=None)
+        feature_norm = _normalize_to_unit(feature, axis=None)
 
         # Линейная комбинация
         combined = self.target_weight * target_norm + self.feature_weight * feature_norm
-        combined = (combined - combined.min()) / (
-            combined.max() - combined.min() + EPSILON
-        )
+        combined = _normalize_to_unit(combined, axis=None)
 
         # Преобразуем в timestamps
         start_ts = dt.strptime(self.start_date, "%Y-%m-%d").timestamp()
@@ -1674,7 +1728,15 @@ class Nullable(Transformer):
 
 
 class Pipeline:
-    """Выполняет последовательность шагов."""
+    """Выполняет последовательность трансформеров для генерации данных.
+
+    Pipeline управляет выполнением шагов генерации, поддерживает
+    сохранение прогресса и возобновление с точки остановки.
+
+    Attributes:
+        steps: Список трансформеров для выполнения.
+        config: Конфигурация генератора.
+    """
 
     def __init__(self, steps: list[Transformer], config: GeneratorConfig):
         """Инициализирует pipeline.
@@ -1762,7 +1824,11 @@ class Pipeline:
 
 
 class PipelineFactory:
-    """Создаёт Pipeline из конфига."""
+    """Фабрика для создания Pipeline из конфигурации.
+
+    Автоматически определяет необходимые шаги на основе GeneratorConfig,
+    выполняет калибровку размера и топологическую сортировку зависимостей.
+    """
 
     def _parse_size(self, size_str: str) -> int:
         """Парсит строку размера в байты.
@@ -1801,7 +1867,6 @@ class PipelineFactory:
         Returns:
             Оценочное количество строк.
         """
-        import os
         import tempfile
 
         target_bytes = self._parse_size(config.target_size)
@@ -1847,14 +1912,11 @@ class PipelineFactory:
             sorted_steps = self._topological_sort(steps)
 
             # Запускаем калибровку
-            db = duckdb.connect()
-            try:
+            with duckdb.connect() as db:
                 meta = Meta(file_path=calibration_path)
 
                 for step in sorted_steps:
                     meta = step.transform(db, meta)
-            finally:
-                db.close()
 
             # Измеряем размер
             calibration_size = os.path.getsize(calibration_path)

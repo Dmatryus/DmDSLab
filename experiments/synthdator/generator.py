@@ -1139,7 +1139,7 @@ class TargetGeneratorMixin:
 
         return y
 
-    def _get_generator(self, method: str) -> TargetGeneratorFunc:
+    def _get_regression_generator(self, method: str) -> TargetGeneratorFunc:
         """Возвращает функцию генерации по имени метода.
 
         Args:
@@ -1272,7 +1272,7 @@ class RegressionTarget(TargetGeneratorMixin, Transformer):
         """
         informative_cols = meta.get_columns_by_tag("informative", "numeric")
         col_name = "target_reg"
-        generator = self._get_generator(self.method)
+        generator = self._get_regression_generator(self.method)
 
         # Оцениваем масштаб шума на sample (отдельный rng для изоляции)
         estimation_rng = np.random.default_rng(self.seed)
@@ -1488,7 +1488,7 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
         # Валидация регрессионного метода (classification методы валидны по умолчанию)
         generator = None
         if is_regression_method:
-            generator = self._get_generator(self.method)
+            generator = self._get_regression_generator(self.method)
 
         # Предвычисляем статистики/пороги (используем отдельный rng для изоляции)
         stats = None
@@ -1648,7 +1648,7 @@ class MulticlassTarget(TargetGeneratorMixin, Transformer):
         """
         informative_cols = meta.get_columns_by_tag("informative", "numeric")
         col_name = "target_multi"
-        generator = self._get_generator(self.method)
+        generator = self._get_regression_generator(self.method)
 
         # Оцениваем границы бинов на sample (отдельный rng для изоляции)
         estimation_rng = np.random.default_rng(self.seed)

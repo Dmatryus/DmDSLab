@@ -204,6 +204,19 @@ class Meta:
         self.column_stats[col].update(stats)
 
 
+def _n_chunks(total: int, chunk_size: int) -> int:
+    """Вычисляет количество чанков для обработки данных.
+
+    Args:
+        total: Общее количество элементов.
+        chunk_size: Размер одного чанка.
+
+    Returns:
+        Количество чанков (ceiling division).
+    """
+    return (total + chunk_size - 1) // chunk_size
+
+
 def _atomic_write(db: duckdb.DuckDBPyConnection, query: str, file_path: str) -> None:
     """Атомарная запись в parquet через временный файл.
 
@@ -239,9 +252,8 @@ def _iter_chunks(
         Кортеж (ids, features) где features — матрица (n_rows, n_cols).
     """
     cols_sql = ", ".join(columns)
-    n_chunks = (meta.row_count + chunk_size - 1) // chunk_size
 
-    for chunk_idx in range(n_chunks):
+    for chunk_idx in range(_n_chunks(meta.row_count, chunk_size)):
         offset = chunk_idx * chunk_size
         limit = min(chunk_size, meta.row_count - offset)
 
@@ -585,18 +597,18 @@ class Numeric(Transformer):
         """
         feature_names = [f"numeric_{i}" for i in range(self.n_features)]
         n_informative = int(self.n_features * self.informative_ratio)
+        num_chunks = _n_chunks(meta.row_count, self.chunk_size)
 
-        n_chunks = (meta.row_count + self.chunk_size - 1) // self.chunk_size
         logger.debug(
             "Numeric: генерация %d фич (%d информативных) в %d чанках",
             self.n_features,
             n_informative,
-            n_chunks,
+            num_chunks,
         )
         temp_files: list[str] = []
 
         try:
-            for chunk_idx in range(n_chunks):
+            for chunk_idx in range(num_chunks):
                 start_idx = chunk_idx * self.chunk_size
                 end_idx = min(start_idx + self.chunk_size, meta.row_count)
                 chunk_rows = end_idx - start_idx
@@ -2115,12 +2127,12 @@ class Nullable(Transformer):
             return meta
 
         rng = np.random.default_rng(self.seed)
-        n_chunks = (meta.row_count + self.chunk_size - 1) // self.chunk_size
+        num_chunks = _n_chunks(meta.row_count, self.chunk_size)
 
         # Генерируем маски чанками и пишем во временные файлы
         temp_mask_files: list[str] = []
         try:
-            for chunk_idx in range(n_chunks):
+            for chunk_idx in range(num_chunks):
                 offset = chunk_idx * self.chunk_size
                 limit = min(self.chunk_size, meta.row_count - offset)
 

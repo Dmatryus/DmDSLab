@@ -5,7 +5,10 @@ from __future__ import annotations
 import logging
 import os
 import pickle
+import tempfile
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime as dt
 from typing import ClassVar, Literal
@@ -17,6 +20,9 @@ from sklearn.datasets import make_classification
 
 # Логгер модуля
 logger = logging.getLogger(__name__)
+
+# Type alias для функций генерации таргета
+TargetGeneratorFunc = Callable[[np.ndarray, np.random.Generator], np.ndarray]
 
 # Константы генерации
 DEFAULT_CHUNK_SIZE = 100_000
@@ -75,9 +81,10 @@ PERCENT_RANK_EPSILON = 0.001
 
 # Параметры генерации таргетов
 MAX_INTERACTION_PAIRS = 3  # Макс. пар взаимодействий в polynomial
-MAX_SIN_FEATURES = 3  # Макс. фич для sin в nonlinear
-MIN_COS_FEATURES = 3  # Мин. индекс фич для cos в nonlinear
-MAX_COS_FEATURES = 6  # Макс. фич для cos в nonlinear
+# Параметры nonlinear: sin[0:3], cos[3:6], exp[6] — без пересечений
+MAX_SIN_FEATURES = 3  # Макс. индекс фич для sin (exclusive): 0, 1, 2
+MIN_COS_FEATURES = 3  # Мин. индекс фич для cos: 3
+MAX_COS_FEATURES = 6  # Макс. индекс фич для cos (exclusive): 3, 4, 5
 
 
 def _atomic_write(db: duckdb.DuckDBPyConnection, query: str, file_path: str) -> None:
@@ -91,6 +98,99 @@ def _atomic_write(db: duckdb.DuckDBPyConnection, query: str, file_path: str) -> 
     tmp_path = f"{file_path}.tmp.parquet"
     db.execute(f"COPY ({query}) TO '{tmp_path}' (FORMAT PARQUET)")
     os.replace(tmp_path, file_path)
+
+
+def _iter_chunks(
+    db: duckdb.DuckDBPyConnection,
+    meta: "Meta",
+    columns: list[str],
+    chunk_size: int,
+) -> Generator[tuple[np.ndarray, np.ndarray], None, None]:
+    """Итератор по чанкам данных.
+
+    Args:
+        db: Соединение с DuckDB.
+        meta: Текущая метаинформация.
+        columns: Список колонок для чтения.
+        chunk_size: Размер чанка.
+
+    Yields:
+        Кортеж (ids, features) где features — матрица (n_rows, n_cols).
+    """
+    cols_sql = ", ".join(columns)
+    n_chunks = (meta.row_count + chunk_size - 1) // chunk_size
+
+    for chunk_idx in range(n_chunks):
+        offset = chunk_idx * chunk_size
+        limit = min(chunk_size, meta.row_count - offset)
+
+        chunk_data = db.execute(
+            f"SELECT id, {cols_sql} FROM '{meta.file_path}' "
+            f"LIMIT {limit} OFFSET {offset}"
+        ).fetchnumpy()
+
+        ids = chunk_data["id"]
+        features = np.column_stack([chunk_data[col] for col in columns])
+
+        yield ids, features
+
+
+@contextmanager
+def _chunked_target_writer(
+    db: duckdb.DuckDBPyConnection,
+    meta: "Meta",
+    col_name: str,
+    col_type: str,
+) -> Generator[Callable[[int, np.ndarray, np.ndarray], None], None, None]:
+    """Контекстный менеджер для чанкованной записи таргета.
+
+    Управляет временными файлами и финальным объединением.
+
+    Args:
+        db: Соединение с DuckDB.
+        meta: Текущая метаинформация.
+        col_name: Имя создаваемой колонки.
+        col_type: Тип колонки (DOUBLE, INT8, etc).
+
+    Yields:
+        Функция write_chunk(chunk_idx, ids, values) для записи чанков.
+    """
+    temp_files: list[str] = []
+
+    def write_chunk(chunk_idx: int, ids: np.ndarray, values: np.ndarray) -> None:
+        chunk_file = f"{meta.file_path}.chunk_{col_name}_{chunk_idx}.parquet"
+        temp_files.append(chunk_file)
+
+        db.register("chunk_data", {"id": ids, "value": values})
+        try:
+            db.execute(
+                f"COPY (SELECT id, value FROM chunk_data) "
+                f"TO '{chunk_file}' (FORMAT PARQUET)"
+            )
+        finally:
+            db.unregister("chunk_data")
+
+    try:
+        yield write_chunk
+
+        # Объединяем чанки и джойним с main
+        if temp_files:
+            chunks_union = " UNION ALL ".join(
+                [f"SELECT * FROM '{f}'" for f in temp_files]
+            )
+            _atomic_write(
+                db,
+                f"""
+                    SELECT m.*, CAST(t.value AS {col_type}) AS {col_name}
+                    FROM '{meta.file_path}' AS m
+                    JOIN ({chunks_union}) AS t ON m.id = t.id
+                """,
+                meta.file_path,
+            )
+    finally:
+        for f in temp_files:
+            if os.path.exists(f):
+                os.remove(f)
 
 
 @dataclass
@@ -286,7 +386,7 @@ class Transformer(ABC):
         Returns:
             Обновлённая Meta.
         """
-        pass
+        raise NotImplementedError
 
 
 class Init(Transformer):
@@ -373,6 +473,12 @@ class Numeric(Transformer):
         n_informative = int(self.n_features * self.informative_ratio)
 
         n_chunks = (meta.row_count + self.chunk_size - 1) // self.chunk_size
+        logger.debug(
+            "Numeric: генерация %d фич (%d информативных) в %d чанках",
+            self.n_features,
+            n_informative,
+            n_chunks,
+        )
         temp_files: list[str] = []
 
         try:
@@ -695,7 +801,7 @@ class TargetGeneratorMixin:
         return y
 
     def _generate_friedman1(
-        self, features: np.ndarray, rng: np.random.Generator
+        self, features: np.ndarray, _rng: np.random.Generator
     ) -> np.ndarray:
         """Friedman #1: классический бенчмарк для нелинейной регрессии.
 
@@ -704,7 +810,7 @@ class TargetGeneratorMixin:
 
         Args:
             features: Матрица фич (n_samples, n_features).
-            rng: Генератор случайных чисел.
+            _rng: Генератор случайных чисел (не используется).
 
         Returns:
             Вектор таргета.
@@ -728,20 +834,20 @@ class TargetGeneratorMixin:
         return y
 
     def _generate_friedman2(
-        self, features: np.ndarray, rng: np.random.Generator
+        self, features: np.ndarray, _rng: np.random.Generator
     ) -> np.ndarray:
         """Friedman #2: sqrt(x0² + (x1*x2 - 1/(x1*x3))²).
 
         Args:
             features: Матрица фич (n_samples, n_features).
-            rng: Генератор случайных чисел.
+            _rng: Генератор случайных чисел (не используется).
 
         Returns:
             Вектор таргета.
         """
         n_features = features.shape[1]
         if n_features < 4:
-            return self._generate_linear(features, rng)
+            return self._generate_linear(features, _rng)
 
         # Масштабируем как в оригинале: x0 in [0,100], x1 in [40π, 560π], x2 in [0,1], x3 in [1,11]
         f_norm = _normalize_to_unit(features, axis=0)
@@ -758,20 +864,20 @@ class TargetGeneratorMixin:
         return np.sqrt(x0**2 + inner**2)
 
     def _generate_friedman3(
-        self, features: np.ndarray, rng: np.random.Generator
+        self, features: np.ndarray, _rng: np.random.Generator
     ) -> np.ndarray:
         """Friedman #3: atan((x1*x2 - 1/(x1*x3)) / x0).
 
         Args:
             features: Матрица фич (n_samples, n_features).
-            rng: Генератор случайных чисел.
+            _rng: Генератор случайных чисел (не используется).
 
         Returns:
             Вектор таргета.
         """
         n_features = features.shape[1]
         if n_features < 4:
-            return self._generate_linear(features, rng)
+            return self._generate_linear(features, _rng)
 
         f_norm = _normalize_to_unit(features, axis=0)
 
@@ -932,6 +1038,7 @@ class RegressionTarget(TargetGeneratorMixin, Transformer):
         ] = "linear",
         noise: float = 0.1,
         seed: int | None = None,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
         name: str | None = None,
     ):
         """Инициализирует генератор таргета регрессии.
@@ -950,15 +1057,56 @@ class RegressionTarget(TargetGeneratorMixin, Transformer):
                 - "radial": зависимость от расстояния до случайных центров
             noise: Стандартное отклонение гауссова шума (относительно std(y)).
             seed: Seed для воспроизводимости.
+            chunk_size: Размер чанка для обработки данных.
             name: Кастомное имя трансформера.
         """
         super().__init__(name)
         self.method = method
         self.noise = noise
         self.seed = seed
+        self.chunk_size = chunk_size
+
+    def _estimate_noise_scale(
+        self,
+        db: duckdb.DuckDBPyConnection,
+        meta: Meta,
+        informative_cols: list[str],
+        generator: TargetGeneratorFunc,
+        rng: np.random.Generator,
+    ) -> float:
+        """Оценивает масштаб шума на sample данных.
+
+        Args:
+            db: Соединение с DuckDB.
+            meta: Текущая метаинформация.
+            informative_cols: Список информативных колонок.
+            generator: Функция генерации таргета.
+            rng: Генератор случайных чисел.
+
+        Returns:
+            Масштаб шума (noise * std(target)).
+        """
+        if self.noise <= 0:
+            return 0.0
+
+        cols_sql = ", ".join(informative_cols)
+        sample_size = min(self.chunk_size, meta.row_count)
+
+        sample_data = db.execute(
+            f"SELECT {cols_sql} FROM '{meta.file_path}' LIMIT {sample_size}"
+        ).fetchnumpy()
+        sample_features = np.column_stack(
+            [sample_data[col] for col in informative_cols]
+        )
+
+        # Генерируем таргет на sample для оценки std
+        sample_target = generator(sample_features, rng)
+        return self.noise * np.std(sample_target)
 
     def transform(self, db: duckdb.DuckDBPyConnection, meta: Meta) -> Meta:
         """Генерирует таргет регрессии на основе информативных фич.
+
+        Использует чанкованную обработку для экономии памяти.
 
         Args:
             db: Соединение с DuckDB.
@@ -968,44 +1116,44 @@ class RegressionTarget(TargetGeneratorMixin, Transformer):
             Обновлённая Meta с информацией о таргете.
         """
         informative_cols = meta.get_columns_by_tag("informative", "numeric")
-
         col_name = "target_reg"
 
-        # Читаем информативные фичи
-        cols_sql = ", ".join(informative_cols)
-        data = db.execute(f"SELECT id, {cols_sql} FROM '{meta.file_path}'").fetchnumpy()
-
-        ids = data["id"]
-        features = np.column_stack([data[col] for col in informative_cols])
-
-        # Генерируем таргет в зависимости от метода
-        rng = np.random.default_rng(self.seed)
         generators = self._get_regression_generators()
-
         if self.method not in generators:
             raise ValueError(
                 f"Неизвестный метод: {self.method}. Доступны: {list(generators.keys())}"
             )
 
-        target = generators[self.method](features, rng)
+        generator = generators[self.method]
 
-        # Добавляем шум пропорционально std таргета
-        if self.noise > 0:
-            noise_scale = self.noise * np.std(target)
-            target = target + rng.normal(0, noise_scale, size=len(target))
-
-        # Сохраняем
-        db.register("target_np", {"id": ids, "target": target})
-        _atomic_write(
-            db,
-            f"""
-                SELECT m.*, CAST(t.target AS DOUBLE) AS {col_name}
-                FROM '{meta.file_path}' AS m
-                JOIN target_np AS t ON m.id = t.id
-            """,
-            meta.file_path,
+        # Оцениваем масштаб шума на sample (отдельный rng для изоляции)
+        estimation_rng = np.random.default_rng(self.seed)
+        noise_scale = self._estimate_noise_scale(
+            db, meta, informative_cols, generator, estimation_rng
         )
-        db.unregister("target_np")
+
+        # Основной rng для генерации (независим от estimation)
+        rng = np.random.default_rng(self.seed)
+
+        logger.debug(
+            "RegressionTarget: метод=%s, noise_scale=%.4f, колонок=%d",
+            self.method,
+            noise_scale,
+            len(informative_cols),
+        )
+
+        with _chunked_target_writer(db, meta, col_name, "DOUBLE") as write_chunk:
+            for chunk_idx, (ids, features) in enumerate(
+                _iter_chunks(db, meta, informative_cols, self.chunk_size)
+            ):
+                # Генерируем таргет для чанка
+                target = generator(features, rng)
+
+                # Добавляем шум
+                if noise_scale > 0:
+                    target = target + rng.normal(0, noise_scale, size=len(target))
+
+                write_chunk(chunk_idx, ids, target)
 
         meta.columns[col_name] = "DOUBLE"
         meta.column_tags[col_name] = ["target", "regression"]
@@ -1040,6 +1188,7 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
         threshold: float = 0.5,
         flip_ratio: float = 0.0,
         seed: int | None = None,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
         name: str | None = None,
     ):
         """Инициализирует генератор бинарного таргета.
@@ -1055,6 +1204,7 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
             threshold: Квантиль для порога бинаризации (для регрессионных методов).
             flip_ratio: Доля меток для случайного переключения (шум).
             seed: Seed для воспроизводимости.
+            chunk_size: Размер чанка для обработки данных.
             name: Кастомное имя трансформера.
         """
         super().__init__(name)
@@ -1062,95 +1212,121 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
         self.threshold = threshold
         self.flip_ratio = flip_ratio
         self.seed = seed
+        self.chunk_size = chunk_size
 
-    def _generate_xor(
-        self, features: np.ndarray, rng: np.random.Generator
-    ) -> np.ndarray:
-        """XOR от первых двух фич — линейно неразделимая задача.
+    def _compute_statistics(
+        self,
+        db: duckdb.DuckDBPyConnection,
+        meta: Meta,
+        informative_cols: list[str],
+    ) -> dict:
+        """Вычисляет статистики для классификационных методов на sample.
 
         Args:
-            features: Матрица фич.
-            rng: Генератор случайных чисел.
+            db: Соединение с DuckDB.
+            meta: Текущая метаинформация.
+            informative_cols: Список информативных колонок.
 
         Returns:
-            Бинарные метки.
+            Словарь со статистиками (медианы, mean, std).
         """
-        # Бинаризуем первые 2 фичи по медиане
-        x0 = features[:, 0] > np.median(features[:, 0])
-        x1 = features[:, 1] > np.median(features[:, 1]) if features.shape[1] > 1 else x0
+        cols_sql = ", ".join(informative_cols[:2])  # Нужны только первые 2 фичи
+        sample_size = min(self.chunk_size, meta.row_count)
 
+        sample_data = db.execute(
+            f"SELECT {cols_sql} FROM '{meta.file_path}' USING SAMPLE {sample_size}"
+        ).fetchnumpy()
+
+        col0 = informative_cols[0]
+        col1 = informative_cols[1] if len(informative_cols) > 1 else col0
+
+        return {
+            "median_0": np.median(sample_data[col0]),
+            "median_1": np.median(sample_data[col1]),
+            "mean_0": np.mean(sample_data[col0]),
+            "mean_1": np.mean(sample_data[col1]),
+            "std_0": np.std(sample_data[col0]),
+            "std_1": np.std(sample_data[col1]),
+        }
+
+    def _generate_xor_chunked(
+        self, features: np.ndarray, stats: dict
+    ) -> np.ndarray:
+        """XOR с предвычисленными медианами."""
+        x0 = features[:, 0] > stats["median_0"]
+        x1 = features[:, 1] > stats["median_1"] if features.shape[1] > 1 else x0
         return (x0 ^ x1).astype(np.int8)
 
-    def _generate_circles(
-        self, features: np.ndarray, rng: np.random.Generator
+    def _generate_circles_chunked(
+        self, features: np.ndarray, stats: dict
     ) -> np.ndarray:
-        """Концентрические окружности — внутренний и внешний круг.
-
-        Args:
-            features: Матрица фич.
-            rng: Генератор случайных чисел.
-
-        Returns:
-            Бинарные метки.
-        """
-        # Нормализуем первые 2 фичи (z-score нормализация)
+        """Circles с предвычисленными статистиками."""
         f = (
             features[:, :2]
             if features.shape[1] >= 2
             else np.column_stack([features[:, 0], features[:, 0]])
         )
-        f_norm = (f - f.mean(axis=0)) / (f.std(axis=0) + EPSILON)
+        # Нормализуем используя предвычисленные статистики
+        f_norm_0 = (f[:, 0] - stats["mean_0"]) / (stats["std_0"] + EPSILON)
+        f_norm_1 = (f[:, 1] - stats["mean_1"]) / (stats["std_1"] + EPSILON)
 
-        # Расстояние от центра
-        dist = np.sqrt(f_norm[:, 0] ** 2 + f_norm[:, 1] ** 2)
+        dist = np.sqrt(f_norm_0 ** 2 + f_norm_1 ** 2)
+        # Используем приближённую медиану (sqrt(2) для стандартного нормального)
+        median_dist = np.sqrt(2) * 0.67  # Приближение медианы chi(2)
+        return (dist > median_dist).astype(np.int8)
 
-        # Медианное расстояние как граница
-        return (dist > np.median(dist)).astype(np.int8)
-
-    def _generate_moons(
-        self, features: np.ndarray, rng: np.random.Generator
+    def _generate_moons_chunked(
+        self, features: np.ndarray, stats: dict
     ) -> np.ndarray:
-        """Два полумесяца — классическая нелинейная задача.
-
-        Args:
-            features: Матрица фич.
-            rng: Генератор случайных чисел.
-
-        Returns:
-            Бинарные метки.
-        """
+        """Moons с предвычисленными статистиками."""
         f = (
             features[:, :2]
             if features.shape[1] >= 2
             else np.column_stack([features[:, 0], features[:, 0]])
         )
-        f_norm = (f - f.mean(axis=0)) / (f.std(axis=0) + EPSILON)
+        f_norm_0 = (f[:, 0] - stats["mean_0"]) / (stats["std_0"] + EPSILON)
+        f_norm_1 = (f[:, 1] - stats["mean_1"]) / (stats["std_1"] + EPSILON)
 
-        # Полумесяцы: y > sin(x) для одного класса
-        boundary = np.sin(f_norm[:, 0] * np.pi)
-        return (f_norm[:, 1] > boundary).astype(np.int8)
+        boundary = np.sin(f_norm_0 * np.pi)
+        return (f_norm_1 > boundary).astype(np.int8)
 
-    def _generate_clusters(
-        self, features: np.ndarray, rng: np.random.Generator
-    ) -> np.ndarray:
-        """KMeans кластеризация на 2 кластера.
+    def _estimate_threshold_value(
+        self,
+        db: duckdb.DuckDBPyConnection,
+        meta: Meta,
+        informative_cols: list[str],
+        generator: TargetGeneratorFunc,
+        rng: np.random.Generator,
+    ) -> float:
+        """Оценивает пороговое значение для бинаризации на sample.
 
         Args:
-            features: Матрица фич.
+            db: Соединение с DuckDB.
+            meta: Текущая метаинформация.
+            informative_cols: Список информативных колонок.
+            generator: Функция генерации latent.
             rng: Генератор случайных чисел.
 
         Returns:
-            Бинарные метки.
+            Пороговое значение для бинаризации.
         """
-        # Используем rng для генерации seed, чтобы соответствовать контракту интерфейса
-        random_state = int(rng.integers(0, 2**31))
-        kmeans = MiniBatchKMeans(
-            n_clusters=2, random_state=random_state, n_init=DEFAULT_KMEANS_N_INIT
+        cols_sql = ", ".join(informative_cols)
+        sample_size = min(self.chunk_size, meta.row_count)
+
+        sample_data = db.execute(
+            f"SELECT {cols_sql} FROM '{meta.file_path}' LIMIT {sample_size}"
+        ).fetchnumpy()
+        sample_features = np.column_stack(
+            [sample_data[col] for col in informative_cols]
         )
-        return kmeans.fit_predict(features).astype(np.int8)
+
+        sample_latent = generator(sample_features, rng)
+        return np.percentile(sample_latent, self.threshold * 100)
 
     def transform(self, db: duckdb.DuckDBPyConnection, meta: Meta) -> Meta:
         """Генерирует бинарный таргет.
+
+        Использует чанкованную обработку для экономии памяти.
 
         Args:
             db: Соединение с DuckDB.
@@ -1160,61 +1336,75 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
             Обновлённая Meta с информацией о таргете.
         """
         informative_cols = meta.get_columns_by_tag("informative", "numeric")
-
         col_name = "target_bin"
-
-        # Читаем фичи
         cols_sql = ", ".join(informative_cols)
-        data = db.execute(f"SELECT id, {cols_sql} FROM '{meta.file_path}'").fetchnumpy()
 
-        ids = data["id"]
-        features = np.column_stack([data[col] for col in informative_cols])
+        classification_methods = {"xor", "circles", "moons", "clusters"}
+        regression_generators = self._get_regression_generators()
 
+        # Валидация метода
+        all_methods = list(classification_methods) + list(regression_generators.keys())
+        if self.method not in all_methods:
+            raise ValueError(
+                f"Неизвестный метод: {self.method}. Доступны: {all_methods}"
+            )
+
+        # Предвычисляем статистики/пороги (используем отдельный rng для изоляции)
+        stats = None
+        threshold_value = None
+        kmeans = None
+
+        if self.method in {"xor", "circles", "moons"}:
+            stats = self._compute_statistics(db, meta, informative_cols)
+        elif self.method == "clusters":
+            # Для clusters обучаем KMeans на sample
+            estimation_rng = np.random.default_rng(self.seed)
+            sample_size = min(self.chunk_size, meta.row_count)
+            sample_data = db.execute(
+                f"SELECT {cols_sql} FROM '{meta.file_path}' USING SAMPLE {sample_size}"
+            ).fetchnumpy()
+            sample_features = np.column_stack(
+                [sample_data[col] for col in informative_cols]
+            )
+            random_state = int(estimation_rng.integers(0, 2**31))
+            kmeans = MiniBatchKMeans(
+                n_clusters=2, random_state=random_state, n_init=DEFAULT_KMEANS_N_INIT
+            )
+            kmeans.fit(sample_features)
+        else:
+            # Регрессионные методы — оцениваем порог
+            estimation_rng = np.random.default_rng(self.seed)
+            threshold_value = self._estimate_threshold_value(
+                db, meta, informative_cols, regression_generators[self.method], estimation_rng
+            )
+
+        # Основной rng для генерации (независим от estimation)
         rng = np.random.default_rng(self.seed)
 
-        # Специфичные методы для классификации — возвращают метки напрямую
-        classification_methods = {
-            "xor": self._generate_xor,
-            "circles": self._generate_circles,
-            "moons": self._generate_moons,
-            "clusters": self._generate_clusters,
-        }
+        with _chunked_target_writer(db, meta, col_name, "INT8") as write_chunk:
+            for chunk_idx, (ids, features) in enumerate(
+                _iter_chunks(db, meta, informative_cols, self.chunk_size)
+            ):
+                # Генерируем таргет в зависимости от метода
+                if self.method == "xor":
+                    target = self._generate_xor_chunked(features, stats)
+                elif self.method == "circles":
+                    target = self._generate_circles_chunked(features, stats)
+                elif self.method == "moons":
+                    target = self._generate_moons_chunked(features, stats)
+                elif self.method == "clusters":
+                    target = kmeans.predict(features).astype(np.int8)
+                else:
+                    # Регрессионные методы
+                    latent = regression_generators[self.method](features, rng)
+                    target = (latent > threshold_value).astype(np.int8)
 
-        if self.method in classification_methods:
-            target = classification_methods[self.method](features, rng)
-        else:
-            # Регрессионные методы — бинаризуем по квантилю
-            regression_generators = self._get_regression_generators()
+                # Добавляем шум через flip
+                if self.flip_ratio > 0:
+                    flip_mask = rng.random(len(target)) < self.flip_ratio
+                    target = np.where(flip_mask, 1 - target, target)
 
-            if self.method not in regression_generators:
-                all_methods = list(classification_methods.keys()) + list(
-                    regression_generators.keys()
-                )
-                raise ValueError(
-                    f"Неизвестный метод: {self.method}. Доступны: {all_methods}"
-                )
-
-            latent = regression_generators[self.method](features, rng)
-            threshold_value = np.percentile(latent, self.threshold * 100)
-            target = (latent > threshold_value).astype(np.int8)
-
-        # Добавляем шум через flip
-        if self.flip_ratio > 0:
-            flip_mask = rng.random(len(target)) < self.flip_ratio
-            target = np.where(flip_mask, 1 - target, target)
-
-        # Сохраняем
-        db.register("target_np", {"id": ids, "target": target})
-        _atomic_write(
-            db,
-            f"""
-                SELECT m.*, CAST(t.target AS INT8) AS {col_name}
-                FROM '{meta.file_path}' AS m
-                JOIN target_np AS t ON m.id = t.id
-            """,
-            meta.file_path,
-        )
-        db.unregister("target_np")
+                write_chunk(chunk_idx, ids, target)
 
         meta.columns[col_name] = "INT8"
         meta.column_tags[col_name] = ["target", "binary"]
@@ -1244,6 +1434,7 @@ class MulticlassTarget(TargetGeneratorMixin, Transformer):
             "radial",
         ] = "linear",
         seed: int | None = None,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
         name: str | None = None,
     ):
         """Инициализирует генератор многоклассового таргета.
@@ -1255,15 +1446,53 @@ class MulticlassTarget(TargetGeneratorMixin, Transformer):
                 - "friedman1", "friedman2", "friedman3"
                 - "exponential", "logarithmic", "step", "radial"
             seed: Seed для воспроизводимости.
+            chunk_size: Размер чанка для обработки данных.
             name: Кастомное имя трансформера.
         """
         super().__init__(name)
         self.n_classes = n_classes
         self.method = method
         self.seed = seed
+        self.chunk_size = chunk_size
+
+    def _estimate_bins(
+        self,
+        db: duckdb.DuckDBPyConnection,
+        meta: Meta,
+        informative_cols: list[str],
+        generator: TargetGeneratorFunc,
+        rng: np.random.Generator,
+    ) -> np.ndarray:
+        """Оценивает границы бинов для квантильного биннинга на sample.
+
+        Args:
+            db: Соединение с DuckDB.
+            meta: Текущая метаинформация.
+            informative_cols: Список информативных колонок.
+            generator: Функция генерации latent.
+            rng: Генератор случайных чисел.
+
+        Returns:
+            Массив границ бинов.
+        """
+        cols_sql = ", ".join(informative_cols)
+        sample_size = min(self.chunk_size, meta.row_count)
+
+        sample_data = db.execute(
+            f"SELECT {cols_sql} FROM '{meta.file_path}' LIMIT {sample_size}"
+        ).fetchnumpy()
+        sample_features = np.column_stack(
+            [sample_data[col] for col in informative_cols]
+        )
+
+        sample_latent = generator(sample_features, rng)
+        percentiles = np.linspace(0, 100, self.n_classes + 1)
+        return np.percentile(sample_latent, percentiles)
 
     def transform(self, db: duckdb.DuckDBPyConnection, meta: Meta) -> Meta:
         """Генерирует многоклассовый таргет через квантильный биннинг.
+
+        Использует чанкованную обработку для экономии памяти.
 
         Args:
             db: Соединение с DuckDB.
@@ -1273,45 +1502,32 @@ class MulticlassTarget(TargetGeneratorMixin, Transformer):
             Обновлённая Meta с информацией о таргете.
         """
         informative_cols = meta.get_columns_by_tag("informative", "numeric")
-
         col_name = "target_multi"
 
-        # Читаем фичи
-        cols_sql = ", ".join(informative_cols)
-        data = db.execute(f"SELECT id, {cols_sql} FROM '{meta.file_path}'").fetchnumpy()
-
-        ids = data["id"]
-        features = np.column_stack([data[col] for col in informative_cols])
-
-        rng = np.random.default_rng(self.seed)
-
-        # Генерируем скрытую переменную
         generators = self._get_regression_generators()
-
         if self.method not in generators:
             raise ValueError(
                 f"Неизвестный метод: {self.method}. Доступны: {list(generators.keys())}"
             )
 
-        latent = generators[self.method](features, rng)
+        generator = generators[self.method]
 
-        # Биннинг по квантилям на n_classes классов
-        percentiles = np.linspace(0, 100, self.n_classes + 1)
-        bins = np.percentile(latent, percentiles)
-        target = np.digitize(latent, bins[1:-1]).astype(np.int8)
+        # Оцениваем границы бинов на sample (отдельный rng для изоляции)
+        estimation_rng = np.random.default_rng(self.seed)
+        bins = self._estimate_bins(db, meta, informative_cols, generator, estimation_rng)
 
-        # Сохраняем
-        db.register("target_np", {"id": ids, "target": target})
-        _atomic_write(
-            db,
-            f"""
-            SELECT m.*, CAST(t.target AS INT8) AS {col_name}
-            FROM '{meta.file_path}' AS m
-            JOIN target_np AS t ON m.id = t.id
-            """,
-            meta.file_path,
-        )
-        db.unregister("target_np")
+        # Основной rng для генерации (независим от estimation)
+        rng = np.random.default_rng(self.seed)
+
+        with _chunked_target_writer(db, meta, col_name, "INT8") as write_chunk:
+            for chunk_idx, (ids, features) in enumerate(
+                _iter_chunks(db, meta, informative_cols, self.chunk_size)
+            ):
+                # Генерируем latent и биннинг
+                latent = generator(features, rng)
+                target = np.digitize(latent, bins[1:-1]).astype(np.int8)
+
+                write_chunk(chunk_idx, ids, target)
 
         meta.columns[col_name] = "INT8"
         meta.column_tags[col_name] = ["target", "multiclass"]
@@ -1359,13 +1575,17 @@ class RankingTarget(Transformer):
         """
         # Находим категориальную колонку для query_id
         if self.category_source:
+            if self.category_source not in meta.columns:
+                raise ValueError(
+                    f"Указанная категориальная колонка '{self.category_source}' "
+                    f"не найдена. Доступные колонки: {list(meta.columns.keys())}"
+                )
             query_col = self.category_source
         else:
+            # Category гарантирован через requires, берём первую категориальную колонку
             category_cols = [
                 col for col, tags in meta.column_tags.items() if "category" in tags
             ]
-            if not category_cols:
-                raise ValueError("Нет категориальных колонок для query_id")
             query_col = category_cols[0]
 
         # Генерируем target_rank через SQL:
@@ -1867,8 +2087,6 @@ class PipelineFactory:
         Returns:
             Оценочное количество строк.
         """
-        import tempfile
-
         target_bytes = self._parse_size(config.target_size)
         logger.info("Калибровка: целевой размер %s (%d байт)", config.target_size, target_bytes)
 
@@ -2026,7 +2244,7 @@ class PipelineFactory:
                     seed=config.seed,
                 )
             )
-            if config.n_categories == 0:
+            if not config.n_categories:
                 steps.append(Category(seed=config.seed, name="category_for_ranking"))
             steps.append(RankingTarget())
 

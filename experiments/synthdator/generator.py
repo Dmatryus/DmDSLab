@@ -109,6 +109,7 @@ MAX_SIN_FEATURES = 3  # Макс. индекс фич для sin (exclusive): 0,
 MIN_COS_FEATURES = 3  # Мин. индекс фич для cos: 3
 MAX_COS_FEATURES = 6  # Макс. индекс фич для cos (exclusive): 3, 4, 5
 
+
 def _normalize_to_unit(arr: np.ndarray, axis: int | None = 0) -> np.ndarray:
     """Нормализует массив в диапазон [0, 1].
 
@@ -331,6 +332,7 @@ class GeneratorConfig:
         category_cardinality: Количество уникальных значений в категории.
         category_method: Метод генерации категорий ("kmeans" или "quantile").
         task: Тип ML-задачи ("regression", "binary", "multiclass", "ranking").
+            None для генерации данных без таргета (например, для кластеризации).
         target_method: Метод генерации целевой переменной.
         target_noise: Уровень шума в таргете (0-1).
         n_classes: Количество классов для multiclass.
@@ -358,10 +360,20 @@ class GeneratorConfig:
     # Таргет
     task: Literal["regression", "binary", "multiclass", "ranking"] | None = None
     target_method: Literal[
-        "linear", "polynomial", "nonlinear",
-        "friedman1", "friedman2", "friedman3",
-        "exponential", "logarithmic", "step", "radial",
-        "xor", "circles", "moons", "clusters",
+        "linear",
+        "polynomial",
+        "nonlinear",
+        "friedman1",
+        "friedman2",
+        "friedman3",
+        "exponential",
+        "logarithmic",
+        "step",
+        "radial",
+        "xor",
+        "circles",
+        "moons",
+        "clusters",
     ] = "linear"
     target_noise: float = 0.1
     n_classes: int = 5
@@ -417,13 +429,23 @@ class GeneratorConfig:
 
         # Валидация совместимости task и target_method
         regression_methods = {
-            "linear", "polynomial", "nonlinear",
-            "friedman1", "friedman2", "friedman3",
-            "exponential", "logarithmic", "step", "radial",
+            "linear",
+            "polynomial",
+            "nonlinear",
+            "friedman1",
+            "friedman2",
+            "friedman3",
+            "exponential",
+            "logarithmic",
+            "step",
+            "radial",
         }
         classification_methods = {"xor", "circles", "moons", "clusters"}
 
-        if self.task in ("binary", "multiclass") and self.target_method in regression_methods:
+        if (
+            self.task in ("binary", "multiclass")
+            and self.target_method in regression_methods
+        ):
             logger.warning(
                 "target_method '%s' является регрессионным и будет бинаризован "
                 "для задачи '%s'",
@@ -600,7 +622,9 @@ class Numeric(Transformer):
                 db.unregister("chunk_np")
 
             # Объединяем чанки и джойним с main
-            chunks_union = " UNION ALL ".join([f"SELECT * FROM '{f}'" for f in temp_files])
+            chunks_union = " UNION ALL ".join(
+                [f"SELECT * FROM '{f}'" for f in temp_files]
+            )
             _atomic_write(
                 db,
                 f"""
@@ -690,7 +714,9 @@ class Category(Transformer):
             sample_data = db.execute(sample_query).fetchnumpy()
             sample_array = np.column_stack([sample_data[col] for col in numeric_cols])
         else:
-            full_data = db.execute(f"SELECT {cols_sql} FROM '{meta.file_path}'").fetchnumpy()
+            full_data = db.execute(
+                f"SELECT {cols_sql} FROM '{meta.file_path}'"
+            ).fetchnumpy()
             sample_array = np.column_stack([full_data[col] for col in numeric_cols])
 
         kmeans = MiniBatchKMeans(
@@ -772,7 +798,9 @@ class Category(Transformer):
                     # Добавляем шум — случайная подмена категории
                     if rng is not None:
                         noise_mask = rng.random(len(labels)) < self.noise_ratio
-                        random_labels = rng.integers(0, self.cardinality, size=len(labels))
+                        random_labels = rng.integers(
+                            0, self.cardinality, size=len(labels)
+                        )
                         labels = np.where(noise_mask, random_labels, labels)
 
                     write_chunk(chunk_idx, ids, labels.astype(str))
@@ -1319,9 +1347,7 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
             "std_1": np.std(sample_data[col1]),
         }
 
-    def _generate_xor_chunked(
-        self, features: np.ndarray, stats: dict
-    ) -> np.ndarray:
+    def _generate_xor_chunked(self, features: np.ndarray, stats: dict) -> np.ndarray:
         """XOR с предвычисленными медианами."""
         x0 = features[:, 0] > stats["median_0"]
         x1 = features[:, 1] > stats["median_1"] if features.shape[1] > 1 else x0
@@ -1340,14 +1366,12 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
         f_norm_0 = (f[:, 0] - stats["mean_0"]) / (stats["std_0"] + EPSILON)
         f_norm_1 = (f[:, 1] - stats["mean_1"]) / (stats["std_1"] + EPSILON)
 
-        dist = np.sqrt(f_norm_0 ** 2 + f_norm_1 ** 2)
+        dist = np.sqrt(f_norm_0**2 + f_norm_1**2)
         # Используем приближённую медиану (sqrt(2) для стандартного нормального)
         median_dist = np.sqrt(2) * CHI2_MEDIAN_FACTOR
         return (dist > median_dist).astype(np.int8)
 
-    def _generate_moons_chunked(
-        self, features: np.ndarray, stats: dict
-    ) -> np.ndarray:
+    def _generate_moons_chunked(self, features: np.ndarray, stats: dict) -> np.ndarray:
         """Moons с предвычисленными статистиками."""
         f = (
             features[:, :2]
@@ -1445,7 +1469,11 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
             # Регрессионные методы — оцениваем порог
             estimation_rng = np.random.default_rng(self.seed)
             threshold_value = self._estimate_threshold_value(
-                db, meta, informative_cols, regression_generators[self.method], estimation_rng
+                db,
+                meta,
+                informative_cols,
+                regression_generators[self.method],
+                estimation_rng,
             )
 
         # Основной rng для генерации (независим от estimation)
@@ -1584,7 +1612,9 @@ class MulticlassTarget(TargetGeneratorMixin, Transformer):
 
         # Оцениваем границы бинов на sample (отдельный rng для изоляции)
         estimation_rng = np.random.default_rng(self.seed)
-        bins = self._estimate_bins(db, meta, informative_cols, generator, estimation_rng)
+        bins = self._estimate_bins(
+            db, meta, informative_cols, generator, estimation_rng
+        )
 
         # Основной rng для генерации (независим от estimation)
         rng = np.random.default_rng(self.seed)
@@ -1754,7 +1784,9 @@ class Datetime(Transformer):
         feature_min = meta.get_column_stat(feature_col, "min")
         feature_max = meta.get_column_stat(feature_col, "max")
 
-        if all(v is not None for v in [target_min, target_max, feature_min, feature_max]):
+        if all(
+            v is not None for v in [target_min, target_max, feature_min, feature_max]
+        ):
             return {
                 "target_min": target_min,
                 "target_max": target_max,
@@ -1834,7 +1866,9 @@ class Datetime(Transformer):
                 )
                 # Нормализуем комбинацию (может выходить за [0,1] из-за весов)
                 combined_min, combined_max = combined.min(), combined.max()
-                combined = (combined - combined_min) / (combined_max - combined_min + EPSILON)
+                combined = (combined - combined_min) / (
+                    combined_max - combined_min + EPSILON
+                )
 
                 # Преобразуем в timestamps
                 timestamps = start_ts + combined * ts_range
@@ -1842,7 +1876,9 @@ class Datetime(Transformer):
                 # Добавляем шум
                 if rng is not None:
                     noise = rng.integers(
-                        -self.noise_seconds, self.noise_seconds + 1, size=len(timestamps)
+                        -self.noise_seconds,
+                        self.noise_seconds + 1,
+                        size=len(timestamps),
                     )
                     timestamps = timestamps + noise
 
@@ -2316,9 +2352,9 @@ class PipelineFactory:
         multipliers = {
             "B": 1,
             "KB": 1024,
-            "MB": 1024 ** 2,
-            "GB": 1024 ** 3,
-            "TB": 1024 ** 4,
+            "MB": 1024**2,
+            "GB": 1024**3,
+            "TB": 1024**4,
         }
 
         for suffix, mult in sorted(multipliers.items(), key=lambda x: -len(x[0])):
@@ -2341,7 +2377,9 @@ class PipelineFactory:
             Оценочное количество строк.
         """
         target_bytes = self._parse_size(config.target_size)
-        logger.info("Калибровка: целевой размер %s (%d байт)", config.target_size, target_bytes)
+        logger.info(
+            "Калибровка: целевой размер %s (%d байт)", config.target_size, target_bytes
+        )
 
         # Калибровочная выборка
         calibration_rows = DEFAULT_CALIBRATION_ROWS

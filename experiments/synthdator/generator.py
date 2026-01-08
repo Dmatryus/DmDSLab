@@ -217,6 +217,27 @@ def _n_chunks(total: int, chunk_size: int) -> int:
     return (total + chunk_size - 1) // chunk_size
 
 
+@contextmanager
+def _registered(
+    db: duckdb.DuckDBPyConnection, name: str, data: dict[str, np.ndarray]
+) -> Generator[None, None, None]:
+    """Контекстный менеджер для временной регистрации данных в DuckDB.
+
+    Args:
+        db: Соединение с DuckDB.
+        name: Имя для регистрации.
+        data: Данные для регистрации.
+
+    Yields:
+        None. Данные доступны как таблица с именем name.
+    """
+    db.register(name, data)
+    try:
+        yield
+    finally:
+        db.unregister(name)
+
+
 def _atomic_write(db: duckdb.DuckDBPyConnection, query: str, file_path: str) -> None:
     """Атомарная запись в parquet через временный файл.
 
@@ -294,14 +315,11 @@ def _chunked_target_writer(
         chunk_file = f"{meta.file_path}.chunk_{col_name}_{chunk_idx}.parquet"
         temp_files.append(chunk_file)
 
-        db.register("chunk_data", {"id": ids, "value": values})
-        try:
+        with _registered(db, "chunk_data", {"id": ids, "value": values}):
             db.execute(
                 f"COPY (SELECT id, value FROM chunk_data) "
                 f"TO '{chunk_file}' (FORMAT PARQUET)"
             )
-        finally:
-            db.unregister("chunk_data")
 
     try:
         yield write_chunk
@@ -626,21 +644,20 @@ class Numeric(Transformer):
                 chunk_data = {"id": ids}
                 for i, name in enumerate(feature_names):
                     chunk_data[name] = features[:, i]
-                db.register("chunk_np", chunk_data)
 
                 chunk_file = f"{meta.file_path}.features_chunk_{chunk_idx}.parquet"
                 temp_files.append(chunk_file)
 
                 feature_cols = ", ".join(feature_names)
-                db.execute(
-                    f"""
-                    COPY (
-                        SELECT id, {feature_cols}
-                        FROM chunk_np
-                    ) TO '{chunk_file}' (FORMAT PARQUET)
-                """
-                )
-                db.unregister("chunk_np")
+                with _registered(db, "chunk_np", chunk_data):
+                    db.execute(
+                        f"""
+                        COPY (
+                            SELECT id, {feature_cols}
+                            FROM chunk_np
+                        ) TO '{chunk_file}' (FORMAT PARQUET)
+                    """
+                    )
 
             # Объединяем чанки и джойним с main
             chunks_union = " UNION ALL ".join(
@@ -2146,11 +2163,11 @@ class Nullable(Transformer):
                 # Записываем чанк масок
                 mask_file = f"{meta.file_path}.null_masks_{chunk_idx}.parquet"
                 temp_mask_files.append(mask_file)
-                db.register("chunk_masks", chunk_masks)
-                db.execute(
-                    f"COPY (SELECT * FROM chunk_masks) TO '{mask_file}' (FORMAT PARQUET)"
-                )
-                db.unregister("chunk_masks")
+                with _registered(db, "chunk_masks", chunk_masks):
+                    db.execute(
+                        f"COPY (SELECT * FROM chunk_masks) "
+                        f"TO '{mask_file}' (FORMAT PARQUET)"
+                    )
 
             # Объединяем маски и применяем
             masks_union = " UNION ALL ".join(

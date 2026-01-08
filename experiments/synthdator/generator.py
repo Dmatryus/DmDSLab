@@ -125,6 +125,72 @@ MIN_COS_FEATURES = 3  # Мин. индекс фич для cos: 3
 MAX_COS_FEATURES = 6  # Макс. индекс фич для cos (exclusive): 3, 4, 5
 
 
+@dataclass
+class Meta:
+    """Метаинформация о состоянии данных.
+
+    Хранит информацию о текущем состоянии сгенерированного датасета,
+    включая схему колонок, теги и прогресс выполнения pipeline.
+
+    Attributes:
+        file_path: Путь к файлу main.parquet.
+        row_count: Количество строк в датасете.
+        columns: Словарь {имя_колонки: тип_данных}.
+        column_tags: Словарь {имя_колонки: список_тегов}.
+        completed_steps: Список имён выполненных шагов pipeline.
+        column_stats: Кеш статистик колонок {имя_колонки: {статистика: значение}}.
+    """
+
+    file_path: str
+    row_count: int = 0
+    columns: dict[str, DType] = field(default_factory=dict)
+    column_tags: dict[str, list[str]] = field(default_factory=dict)
+    completed_steps: list[str] = field(default_factory=list)
+    column_stats: dict[str, dict[str, float]] = field(default_factory=dict)
+
+    def get_columns_by_tag(
+        self, prefer_tag: str, fallback_tag: str | None = None
+    ) -> list[str]:
+        """Возвращает колонки по тегу с опциональным fallback.
+
+        Args:
+            prefer_tag: Предпочитаемый тег.
+            fallback_tag: Fallback тег, если prefer_tag не найден.
+
+        Returns:
+            Список имён колонок.
+        """
+        cols = [col for col, tags in self.column_tags.items() if prefer_tag in tags]
+        if not cols and fallback_tag:
+            cols = [
+                col for col, tags in self.column_tags.items() if fallback_tag in tags
+            ]
+        return cols
+
+    def get_column_stat(self, col: str, stat: str) -> float | None:
+        """Возвращает кешированную статистику колонки.
+
+        Args:
+            col: Имя колонки.
+            stat: Название статистики (min, max, mean, std).
+
+        Returns:
+            Значение статистики или None если не закеширована.
+        """
+        return self.column_stats.get(col, {}).get(stat)
+
+    def set_column_stats(self, col: str, stats: dict[str, float]) -> None:
+        """Кеширует статистики колонки.
+
+        Args:
+            col: Имя колонки.
+            stats: Словарь {статистика: значение}.
+        """
+        if col not in self.column_stats:
+            self.column_stats[col] = {}
+        self.column_stats[col].update(stats)
+
+
 def _atomic_write(db: duckdb.DuckDBPyConnection, query: str, file_path: str) -> None:
     """Атомарная запись в parquet через временный файл.
 
@@ -175,42 +241,6 @@ def _iter_chunks(
         features = np.column_stack([chunk_data[col] for col in columns])
 
         yield ids, features
-
-
-def _iter_chunks_dict(
-    db: duckdb.DuckDBPyConnection,
-    file_path: str,
-    row_count: int,
-    columns: list[str],
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
-) -> Generator[dict[str, np.ndarray], None, None]:
-    """Итератор по чанкам данных, возвращающий словарь.
-
-    Упрощённая версия для случаев, когда не нужна матрица фич.
-
-    Args:
-        db: Соединение с DuckDB.
-        file_path: Путь к parquet файлу.
-        row_count: Общее количество строк.
-        columns: Список колонок для чтения (включая id если нужен).
-        chunk_size: Размер чанка.
-
-    Yields:
-        Словарь {column_name: values} для каждого чанка.
-    """
-    cols_sql = ", ".join(columns)
-    n_chunks = (row_count + chunk_size - 1) // chunk_size
-
-    for chunk_idx in range(n_chunks):
-        offset = chunk_idx * chunk_size
-        limit = min(chunk_size, row_count - offset)
-
-        chunk_data = db.execute(
-            f"SELECT {cols_sql} FROM '{file_path}' "
-            f"ORDER BY id LIMIT {limit} OFFSET {offset}"
-        ).fetchnumpy()
-
-        yield chunk_data
 
 
 @contextmanager
@@ -396,47 +426,6 @@ class GeneratorConfig:
                 f"target_method '{self.target_method}' не поддерживается для задачи "
                 f"'multiclass'. Используйте один из: {sorted(regression_methods)}"
             )
-
-
-@dataclass
-class Meta:
-    """Метаинформация о состоянии данных.
-
-    Хранит информацию о текущем состоянии сгенерированного датасета,
-    включая схему колонок, теги и прогресс выполнения pipeline.
-
-    Attributes:
-        file_path: Путь к файлу main.parquet.
-        row_count: Количество строк в датасете.
-        columns: Словарь {имя_колонки: тип_данных}.
-        column_tags: Словарь {имя_колонки: список_тегов}.
-        completed_steps: Список имён выполненных шагов pipeline.
-    """
-
-    file_path: str
-    row_count: int = 0
-    columns: dict[str, DType] = field(default_factory=dict)
-    column_tags: dict[str, list[str]] = field(default_factory=dict)
-    completed_steps: list[str] = field(default_factory=list)
-
-    def get_columns_by_tag(
-        self, prefer_tag: str, fallback_tag: str | None = None
-    ) -> list[str]:
-        """Возвращает колонки по тегу с опциональным fallback.
-
-        Args:
-            prefer_tag: Предпочитаемый тег.
-            fallback_tag: Fallback тег, если prefer_tag не найден.
-
-        Returns:
-            Список имён колонок.
-        """
-        cols = [col for col, tags in self.column_tags.items() if prefer_tag in tags]
-        if not cols and fallback_tag:
-            cols = [
-                col for col, tags in self.column_tags.items() if fallback_tag in tags
-            ]
-        return cols
 
 
 class Transformer(ABC):
@@ -635,6 +624,7 @@ class Category(Transformer):
         method: Literal["kmeans", "quantile"] = "kmeans",
         noise_ratio: float = 0.0,
         seed: int | None = None,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
         name: str | None = None,
         max_kmeans_samples: int = DEFAULT_KMEANS_SAMPLES,
     ):
@@ -645,6 +635,7 @@ class Category(Transformer):
             method: Метод генерации — "kmeans" (кластеризация) или "quantile" (бакетизация).
             noise_ratio: Доля значений для случайной подмены (только для quantile).
             seed: Seed для воспроизводимости.
+            chunk_size: Размер чанка для обработки данных.
             name: Кастомное имя трансформера.
             max_kmeans_samples: Максимум строк для обучения KMeans (сэмплирование).
         """
@@ -653,18 +644,16 @@ class Category(Transformer):
         self.method = method
         self.noise_ratio = noise_ratio
         self.seed = seed
+        self.chunk_size = chunk_size
         self.max_kmeans_samples = max_kmeans_samples
 
-    def _generate_kmeans(
+    def _train_kmeans(
         self,
         db: duckdb.DuckDBPyConnection,
         meta: Meta,
         numeric_cols: list[str],
-    ) -> np.ndarray:
-        """Генерирует категории через MiniBatchKMeans.
-
-        Для больших данных использует сэмплирование: обучает KMeans на выборке,
-        затем применяет predict ко всем данным чанками.
+    ) -> MiniBatchKMeans:
+        """Обучает KMeans на sample данных.
 
         Args:
             db: Соединение с DuckDB.
@@ -672,7 +661,7 @@ class Category(Transformer):
             numeric_cols: Список числовых колонок.
 
         Returns:
-            Массив меток категорий.
+            Обученная модель MiniBatchKMeans.
         """
         cols_sql = ", ".join(numeric_cols)
 
@@ -694,61 +683,40 @@ class Category(Transformer):
             n_init=DEFAULT_KMEANS_N_INIT,
         )
         kmeans.fit(sample_array)
+        return kmeans
 
-        # Predict чанками для экономии памяти
-        chunk_size = DEFAULT_CHUNK_SIZE
-        labels = np.empty(meta.row_count, dtype=np.int32)
-
-        for offset in range(0, meta.row_count, chunk_size):
-            limit = min(chunk_size, meta.row_count - offset)
-            chunk_query = f"""
-                SELECT {cols_sql} FROM '{meta.file_path}'
-                LIMIT {limit} OFFSET {offset}
-            """
-            chunk_data = db.execute(chunk_query).fetchnumpy()
-            chunk_array = np.column_stack([chunk_data[col] for col in numeric_cols])
-            labels[offset:offset + limit] = kmeans.predict(chunk_array)
-
-        return labels
-
-    def _generate_quantile(
+    def _compute_quantile_bins(
         self,
         db: duckdb.DuckDBPyConnection,
         meta: Meta,
-        numeric_cols: list[str],
+        source_col: str,
     ) -> np.ndarray:
-        """Генерирует категории через бакетизацию квантилями + шум.
+        """Вычисляет границы бинов через квантили.
 
         Args:
             db: Соединение с DuckDB.
             meta: Текущая метаинформация.
-            numeric_cols: Список числовых колонок.
+            source_col: Колонка-источник для бинаризации.
 
         Returns:
-            Массив меток категорий.
+            Массив границ бинов.
         """
-        # Берём первую числовую колонку
-        source_col = numeric_cols[0]
+        # Вычисляем квантили через SQL на sample
+        percentiles = np.linspace(0, 1, self.cardinality + 1)
+        quantile_values = []
 
-        data = db.execute(f"SELECT {source_col} FROM '{meta.file_path}'").fetchnumpy()
-        values = data[source_col]
+        for p in percentiles:
+            value = db.execute(
+                f"SELECT APPROX_QUANTILE({source_col}, {p}) FROM '{meta.file_path}'"
+            ).fetchone()[0]
+            quantile_values.append(value)
 
-        # Бакетизация через квантили
-        percentiles = np.linspace(0, 100, self.cardinality + 1)
-        bins = np.percentile(values, percentiles)
-        labels = np.digitize(values, bins[1:-1])
-
-        # Добавляем шум — случайная подмена категории
-        if self.noise_ratio > 0:
-            rng = np.random.default_rng(self.seed)
-            noise_mask = rng.random(len(values)) < self.noise_ratio
-            random_labels = rng.integers(0, self.cardinality, size=len(values))
-            labels = np.where(noise_mask, random_labels, labels)
-
-        return labels
+        return np.array(quantile_values)
 
     def transform(self, db: duckdb.DuckDBPyConnection, meta: Meta) -> Meta:
         """Генерирует категориальную колонку и добавляет к main.
+
+        Использует чанкованную обработку для экономии памяти.
 
         Args:
             db: Соединение с DuckDB.
@@ -760,30 +728,38 @@ class Category(Transformer):
         numeric_cols = [
             col for col, tags in meta.column_tags.items() if "numeric" in tags
         ]
-
-        if self.method == "kmeans":
-            labels = self._generate_kmeans(db, meta, numeric_cols)
-        else:
-            labels = self._generate_quantile(db, meta, numeric_cols)
-
-        # Имя колонки на основе имени трансформера
         col_name = f"cat_{self.name}"
 
-        # Читаем id и добавляем labels
-        ids = db.execute(f"SELECT id FROM '{meta.file_path}'").fetchnumpy()["id"]
-        db.register("labels_np", {"id": ids, "label": labels})
+        if self.method == "kmeans":
+            # Обучаем KMeans на sample
+            kmeans = self._train_kmeans(db, meta, numeric_cols)
 
-        # Добавляем колонку к main
-        _atomic_write(
-            db,
-            f"""
-                SELECT m.*, CAST(l.label AS VARCHAR) AS {col_name}
-                FROM '{meta.file_path}' AS m
-                JOIN labels_np AS l ON m.id = l.id
-            """,
-            meta.file_path,
-        )
-        db.unregister("labels_np")
+            with _chunked_target_writer(db, meta, col_name, "VARCHAR") as write_chunk:
+                for chunk_idx, (ids, features) in enumerate(
+                    _iter_chunks(db, meta, numeric_cols, self.chunk_size)
+                ):
+                    labels = kmeans.predict(features).astype(str)
+                    write_chunk(chunk_idx, ids, labels)
+        else:
+            # Quantile: вычисляем bins через SQL, применяем чанками
+            source_col = numeric_cols[0]
+            bins = self._compute_quantile_bins(db, meta, source_col)
+            rng = np.random.default_rng(self.seed) if self.noise_ratio > 0 else None
+
+            with _chunked_target_writer(db, meta, col_name, "VARCHAR") as write_chunk:
+                for chunk_idx, (ids, features) in enumerate(
+                    _iter_chunks(db, meta, [source_col], self.chunk_size)
+                ):
+                    values = features[:, 0]
+                    labels = np.digitize(values, bins[1:-1])
+
+                    # Добавляем шум — случайная подмена категории
+                    if rng is not None:
+                        noise_mask = rng.random(len(labels)) < self.noise_ratio
+                        random_labels = rng.integers(0, self.cardinality, size=len(labels))
+                        labels = np.where(noise_mask, random_labels, labels)
+
+                    write_chunk(chunk_idx, ids, labels.astype(str))
 
         # Обновляем meta
         meta.columns[col_name] = DType.VARCHAR
@@ -879,7 +855,7 @@ class TargetGeneratorMixin:
         return y
 
     def _generate_friedman1(
-        self, features: np.ndarray, _rng: np.random.Generator
+        self, features: np.ndarray, rng: np.random.Generator  # noqa: ARG002
     ) -> np.ndarray:
         """Friedman #1: классический бенчмарк для нелинейной регрессии.
 
@@ -888,7 +864,7 @@ class TargetGeneratorMixin:
 
         Args:
             features: Матрица фич (n_samples, n_features).
-            _rng: Не используется (сохранён для единой сигнатуры TargetGeneratorFunc).
+            rng: Генератор случайных чисел (не используется — функция детерминистическая).
 
         Returns:
             Вектор таргета.
@@ -912,20 +888,20 @@ class TargetGeneratorMixin:
         return y
 
     def _generate_friedman2(
-        self, features: np.ndarray, _rng: np.random.Generator
+        self, features: np.ndarray, rng: np.random.Generator  # noqa: ARG002
     ) -> np.ndarray:
         """Friedman #2: sqrt(x0² + (x1*x2 - 1/(x1*x3))²).
 
         Args:
             features: Матрица фич (n_samples, n_features).
-            _rng: Не используется (сохранён для единой сигнатуры TargetGeneratorFunc).
+            rng: Генератор случайных чисел (не используется — функция детерминистическая).
 
         Returns:
             Вектор таргета.
         """
         n_features = features.shape[1]
         if n_features < 4:
-            return self._generate_linear(features, _rng)
+            return self._generate_linear(features, rng)
 
         # Масштабируем как в оригинале: x0 in [0,100], x1 in [40π, 560π], x2 in [0,1], x3 in [1,11]
         f_norm = _normalize_to_unit(features, axis=0)
@@ -942,20 +918,20 @@ class TargetGeneratorMixin:
         return np.sqrt(x0**2 + inner**2)
 
     def _generate_friedman3(
-        self, features: np.ndarray, _rng: np.random.Generator
+        self, features: np.ndarray, rng: np.random.Generator  # noqa: ARG002
     ) -> np.ndarray:
         """Friedman #3: atan((x1*x2 - 1/(x1*x3)) / x0).
 
         Args:
             features: Матрица фич (n_samples, n_features).
-            _rng: Не используется (сохранён для единой сигнатуры TargetGeneratorFunc).
+            rng: Генератор случайных чисел (не используется — функция детерминистическая).
 
         Returns:
             Вектор таргета.
         """
         n_features = features.shape[1]
         if n_features < 4:
-            return self._generate_linear(features, _rng)
+            return self._generate_linear(features, rng)
 
         f_norm = _normalize_to_unit(features, axis=0)
 
@@ -1746,6 +1722,8 @@ class Datetime(Transformer):
     ) -> dict[str, float]:
         """Вычисляет глобальные min/max для нормализации.
 
+        Использует кеш в meta.column_stats если статистики уже вычислены.
+
         Args:
             db: Соединение с DuckDB.
             meta: Текущая метаинформация.
@@ -1754,6 +1732,21 @@ class Datetime(Transformer):
         Returns:
             Словарь с min/max значениями для target и feature.
         """
+        # Проверяем кеш
+        target_min = meta.get_column_stat("target_reg", "min")
+        target_max = meta.get_column_stat("target_reg", "max")
+        feature_min = meta.get_column_stat(feature_col, "min")
+        feature_max = meta.get_column_stat(feature_col, "max")
+
+        if all(v is not None for v in [target_min, target_max, feature_min, feature_max]):
+            return {
+                "target_min": target_min,
+                "target_max": target_max,
+                "feature_min": feature_min,
+                "feature_max": feature_max,
+            }
+
+        # Вычисляем и кешируем
         stats = db.execute(
             f"""
             SELECT
@@ -1764,6 +1757,9 @@ class Datetime(Transformer):
             FROM '{meta.file_path}'
             """
         ).fetchone()
+
+        meta.set_column_stats("target_reg", {"min": stats[0], "max": stats[1]})
+        meta.set_column_stats(feature_col, {"min": stats[2], "max": stats[3]})
 
         return {
             "target_min": stats[0],
@@ -1898,6 +1894,7 @@ class Boolean(Transformer):
         flip_ratio: float = 0.0,
         source_column: str | int | None = None,
         seed: int | None = None,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
         name: str | None = None,
     ):
         """Инициализирует генератор boolean.
@@ -1910,6 +1907,7 @@ class Boolean(Transformer):
                 - int: индекс числовой колонки (0-based, с циклическим переходом)
                 - None: использует первую числовую колонку
             seed: Seed для воспроизводимости.
+            chunk_size: Размер чанка для обработки данных.
             name: Кастомное имя трансформера.
         """
         super().__init__(name)
@@ -1917,6 +1915,7 @@ class Boolean(Transformer):
         self.flip_ratio = flip_ratio
         self.source_column = source_column
         self.seed = seed
+        self.chunk_size = chunk_size
 
     def _resolve_source_column(self, meta: Meta) -> str:
         """Определяет колонку-источник для бинаризации.
@@ -1956,6 +1955,8 @@ class Boolean(Transformer):
         Бинаризует числовую фичу по квантильному порогу,
         затем случайно переключает часть значений.
 
+        Использует чанкованную обработку для экономии памяти.
+
         Args:
             db: Соединение с DuckDB.
             meta: Текущая метаинформация.
@@ -1966,37 +1967,27 @@ class Boolean(Transformer):
         source_col = self._resolve_source_column(meta)
         col_name = f"flag_{self.name}"
 
-        # Читаем данные
-        data = db.execute(
-            f"SELECT id, {source_col} FROM '{meta.file_path}'"
-        ).fetchnumpy()
+        # Вычисляем threshold через SQL (эффективнее чем загрузка всех данных)
+        threshold_value = db.execute(
+            f"SELECT APPROX_QUANTILE({source_col}, {self.threshold}) "
+            f"FROM '{meta.file_path}'"
+        ).fetchone()[0]
 
-        values = data[source_col]
-        ids = data["id"]
+        rng = np.random.default_rng(self.seed) if self.flip_ratio > 0 else None
 
-        # Бинаризация по квантильному порогу
-        threshold_value = np.percentile(values, self.threshold * 100)
-        flags = (values > threshold_value).astype(np.int8)
+        with _chunked_target_writer(db, meta, col_name, "BOOLEAN") as write_chunk:
+            for chunk_idx, (ids, features) in enumerate(
+                _iter_chunks(db, meta, [source_col], self.chunk_size)
+            ):
+                values = features[:, 0]
+                flags = (values > threshold_value).astype(np.int8)
 
-        # Добавляем шум через flip
-        if self.flip_ratio > 0:
-            rng = np.random.default_rng(self.seed)
-            flip_mask = rng.random(len(flags)) < self.flip_ratio
-            flags = np.where(flip_mask, 1 - flags, flags)
+                # Добавляем шум через flip
+                if rng is not None:
+                    flip_mask = rng.random(len(flags)) < self.flip_ratio
+                    flags = np.where(flip_mask, 1 - flags, flags)
 
-        # Сохраняем
-        db.register("flags_np", {"id": ids, "flag": flags})
-
-        _atomic_write(
-            db,
-            f"""
-            SELECT m.*, CAST(f.flag AS BOOLEAN) AS {col_name}
-            FROM '{meta.file_path}' AS m
-            JOIN flags_np AS f ON m.id = f.id
-            """,
-            meta.file_path,
-        )
-        db.unregister("flags_np")
+                write_chunk(chunk_idx, ids, flags)
 
         meta.columns[col_name] = DType.BOOLEAN
         meta.column_tags[col_name] = ["boolean"]
@@ -2016,6 +2007,7 @@ class Nullable(Transformer):
         columns: list[str] | None = None,
         ratio: float = 0.1,
         seed: int | None = None,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
         name: str | None = None,
     ):
         """Инициализирует трансформер для добавления NULL.
@@ -2025,6 +2017,7 @@ class Nullable(Transformer):
             columns: Конкретные колонки для обработки. Если указано, tags игнорируется.
             ratio: Доля NULL значений (от 0 до 1).
             seed: Seed для воспроизводимости.
+            chunk_size: Размер чанка для обработки данных.
             name: Кастомное имя трансформера.
         """
         super().__init__(name)
@@ -2032,9 +2025,12 @@ class Nullable(Transformer):
         self.columns = columns
         self.ratio = ratio
         self.seed = seed
+        self.chunk_size = chunk_size
 
     def transform(self, db: duckdb.DuckDBPyConnection, meta: Meta) -> Meta:
         """Добавляет NULL в выбранные колонки.
+
+        Использует чанкованную обработку для экономии памяти.
 
         Args:
             db: Соединение с DuckDB.
@@ -2057,47 +2053,64 @@ class Nullable(Transformer):
             meta.completed_steps.append(self.name)
             return meta
 
-        # Генерируем маску NULL для каждой колонки
         rng = np.random.default_rng(self.seed)
+        n_chunks = (meta.row_count + self.chunk_size - 1) // self.chunk_size
 
-        # Формируем CASE выражения для каждой колонки
-        case_expressions = []
-        null_arrays = {}
+        # Генерируем маски чанками и пишем во временные файлы
+        temp_mask_files: list[str] = []
+        try:
+            for chunk_idx in range(n_chunks):
+                offset = chunk_idx * self.chunk_size
+                limit = min(self.chunk_size, meta.row_count - offset)
 
-        for i, col in enumerate(target_cols):
-            null_mask = rng.random(meta.row_count) < self.ratio
-            null_arrays[f"null_{i}"] = null_mask.astype(np.int8)
+                # Генерируем маски для этого чанка
+                chunk_masks: dict[str, np.ndarray] = {
+                    f"mask_{i}": (rng.random(limit) < self.ratio).astype(np.int8)
+                    for i in range(len(target_cols))
+                }
+                chunk_masks["id"] = np.arange(offset, offset + limit, dtype=np.int64)
 
-        # Создаём словарь с id и масками
-        ids = np.arange(meta.row_count, dtype=np.int64)
-        mask_data = {"id": ids}
-        for i in range(len(target_cols)):
-            mask_data[f"mask_{i}"] = null_arrays[f"null_{i}"]
-        db.register("null_masks", mask_data)
-
-        # Формируем SQL с CASE для каждой колонки
-        select_parts = []
-        for col in meta.columns:
-            if col in target_cols:
-                idx = target_cols.index(col)
-                select_parts.append(
-                    f"CASE WHEN n.mask_{idx} = 1 THEN NULL ELSE m.{col} END AS {col}"
+                # Записываем чанк масок
+                mask_file = f"{meta.file_path}.null_masks_{chunk_idx}.parquet"
+                temp_mask_files.append(mask_file)
+                db.register("chunk_masks", chunk_masks)
+                db.execute(
+                    f"COPY (SELECT * FROM chunk_masks) TO '{mask_file}' (FORMAT PARQUET)"
                 )
-            else:
-                select_parts.append(f"m.{col}")
+                db.unregister("chunk_masks")
 
-        select_sql = ", ".join(select_parts)
+            # Объединяем маски и применяем
+            masks_union = " UNION ALL ".join(
+                [f"SELECT * FROM '{f}'" for f in temp_mask_files]
+            )
 
-        _atomic_write(
-            db,
-            f"""
-            SELECT {select_sql}
-            FROM '{meta.file_path}' AS m
-            JOIN null_masks AS n ON m.id = n.id
-            """,
-            meta.file_path,
-        )
-        db.unregister("null_masks")
+            # Формируем SQL с CASE для каждой колонки
+            select_parts = []
+            for col in meta.columns:
+                if col in target_cols:
+                    idx = target_cols.index(col)
+                    select_parts.append(
+                        f"CASE WHEN n.mask_{idx} = 1 THEN NULL ELSE m.{col} END AS {col}"
+                    )
+                else:
+                    select_parts.append(f"m.{col}")
+
+            select_sql = ", ".join(select_parts)
+
+            _atomic_write(
+                db,
+                f"""
+                SELECT {select_sql}
+                FROM '{meta.file_path}' AS m
+                JOIN ({masks_union}) AS n ON m.id = n.id
+                """,
+                meta.file_path,
+            )
+        finally:
+            # Cleanup временных файлов
+            for f in temp_mask_files:
+                if os.path.exists(f):
+                    os.remove(f)
 
         # Обновляем meta — добавляем тег nullable
         for col in target_cols:
@@ -2166,13 +2179,17 @@ class Pipeline:
         """Загружает meta из pickle если существует.
 
         Returns:
-            Объект Meta если файл существует, иначе None.
+            Объект Meta если файл существует и валиден, иначе None.
         """
         path = self._meta_pickle_path()
-        if os.path.exists(path):
+        if not os.path.exists(path):
+            return None
+        try:
             with open(path, "rb") as f:
                 return pickle.load(f)
-        return None
+        except (pickle.UnpicklingError, EOFError, AttributeError) as e:
+            logger.warning("Не удалось загрузить meta.pkl: %s. Начинаем с нуля.", e)
+            return None
 
     def run(self) -> Meta:
         """Запускает все шаги последовательно с поддержкой возобновления.

@@ -57,21 +57,6 @@ MIN_ROW_COUNT = 100
 # Математические константы
 EPSILON = 1e-10  # Защита от деления на ноль
 
-
-def _normalize_to_unit(arr: np.ndarray, axis: int | None = 0) -> np.ndarray:
-    """Нормализует массив в диапазон [0, 1].
-
-    Args:
-        arr: Входной массив.
-        axis: Ось для вычисления min/max. None для всего массива.
-
-    Returns:
-        Нормализованный массив в диапазоне [0, 1].
-    """
-    arr_min = arr.min(axis=axis, keepdims=True) if axis is not None else arr.min()
-    arr_max = arr.max(axis=axis, keepdims=True) if axis is not None else arr.max()
-    return (arr - arr_min) / (arr_max - arr_min + EPSILON)
-
 # Коэффициенты для генерации таргетов
 COEF_SQUARED_SCALE = 0.5  # Масштаб квадратичных членов в polynomial
 COEF_INTERACTION_SCALE = 0.3  # Масштаб взаимодействий в polynomial
@@ -123,6 +108,20 @@ MAX_INTERACTION_PAIRS = 3  # Макс. пар взаимодействий в po
 MAX_SIN_FEATURES = 3  # Макс. индекс фич для sin (exclusive): 0, 1, 2
 MIN_COS_FEATURES = 3  # Мин. индекс фич для cos: 3
 MAX_COS_FEATURES = 6  # Макс. индекс фич для cos (exclusive): 3, 4, 5
+
+def _normalize_to_unit(arr: np.ndarray, axis: int | None = 0) -> np.ndarray:
+    """Нормализует массив в диапазон [0, 1].
+
+    Args:
+        arr: Входной массив.
+        axis: Ось для вычисления min/max. None для всего массива.
+
+    Returns:
+        Нормализованный массив в диапазоне [0, 1].
+    """
+    arr_min = arr.min(axis=axis, keepdims=True) if axis is not None else arr.min()
+    arr_max = arr.max(axis=axis, keepdims=True) if axis is not None else arr.max()
+    return (arr - arr_min) / (arr_max - arr_min + EPSILON)
 
 
 @dataclass
@@ -294,7 +293,11 @@ def _chunked_target_writer(
     try:
         yield write_chunk
 
-        # Объединяем чанки и джойним с main
+        # Объединяем чанки и джойним с main.
+        # DuckDB выполняет это стримингом — данные не загружаются в память целиком:
+        # - UNION ALL читает parquet файлы последовательно
+        # - JOIN использует hash table только для чанков (id + value)
+        # - COPY TO пишет результат потоково
         if temp_files:
             chunks_union = " UNION ALL ".join(
                 [f"SELECT * FROM '{f}'" for f in temp_files]

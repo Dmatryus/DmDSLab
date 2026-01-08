@@ -153,12 +153,17 @@ class Meta:
     ) -> list[str]:
         """Возвращает колонки по тегу с опциональным fallback.
 
+        Ищет колонки с prefer_tag. Если таких нет и задан fallback_tag,
+        возвращает колонки с fallback_tag.
+
         Args:
-            prefer_tag: Предпочитаемый тег.
-            fallback_tag: Fallback тег, если prefer_tag не найден.
+            prefer_tag: Основной тег для поиска (например, "informative").
+            fallback_tag: Резервный тег, используется только если prefer_tag
+                не найден ни у одной колонки (например, "numeric").
 
         Returns:
-            Список имён колонок.
+            Список имён колонок с найденным тегом. Пустой список, если
+            ни prefer_tag, ни fallback_tag не найдены.
         """
         cols = [col for col, tags in self.column_tags.items() if prefer_tag in tags]
         if not cols and fallback_tag:

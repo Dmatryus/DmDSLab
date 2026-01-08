@@ -2,7 +2,8 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Literal, TYPE_CHECKING
+from datetime import datetime as dt
+from typing import ClassVar, Literal, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Type
@@ -68,6 +69,43 @@ class GeneratorConfig:
     # NULL
     nullable_ratio: float = 0.0
 
+    def __post_init__(self) -> None:
+        """Валидация параметров конфига."""
+        if self.n_numeric < 1:
+            raise ValueError("n_numeric должен быть >= 1")
+
+        if not 0.0 <= self.informative_ratio <= 1.0:
+            raise ValueError("informative_ratio должен быть в диапазоне [0, 1]")
+
+        if self.n_categories < 0:
+            raise ValueError("n_categories должен быть >= 0")
+
+        if self.category_cardinality < 2:
+            raise ValueError("category_cardinality должен быть >= 2")
+
+        if self.n_classes < 2:
+            raise ValueError("n_classes должен быть >= 2")
+
+        if not 0.0 <= self.target_noise <= 1.0:
+            raise ValueError("target_noise должен быть в диапазоне [0, 1]")
+
+        if self.n_booleans < 0:
+            raise ValueError("n_booleans должен быть >= 0")
+
+        if not 0.0 <= self.nullable_ratio <= 1.0:
+            raise ValueError("nullable_ratio должен быть в диапазоне [0, 1]")
+
+        # Валидация дат
+        try:
+            start = dt.strptime(self.datetime_start, "%Y-%m-%d")
+            end = dt.strptime(self.datetime_end, "%Y-%m-%d")
+            if start >= end:
+                raise ValueError("datetime_start должен быть раньше datetime_end")
+        except ValueError as e:
+            if "должен быть" in str(e):
+                raise
+            raise ValueError(f"Некорректный формат даты (ожидается YYYY-MM-DD): {e}")
+
 
 @dataclass
 class Meta:
@@ -83,8 +121,8 @@ class Meta:
 class Transformer(ABC):
     """Базовый класс трансформера pipeline."""
 
-    default_name: str = "transformer"
-    requires: list[type["Transformer"]] = []
+    default_name: ClassVar[str] = "transformer"
+    requires: ClassVar[list[type["Transformer"]]] = []
 
     def __init__(self, name: str | None = None):
         """Инициализирует трансформер.
@@ -111,8 +149,8 @@ class Transformer(ABC):
 class Init(Transformer):
     """Создаёт таблицу с колонкой id."""
 
-    default_name = "init"
-    requires = []
+    default_name: ClassVar[str] = "init"
+    requires: ClassVar[list[type[Transformer]]] = []
 
     def __init__(self, row_count: int, name: str | None = None):
         """Инициализирует Init.
@@ -152,8 +190,8 @@ class Init(Transformer):
 class Numeric(Transformer):
     """Генерирует числовые фичи через sklearn с чанкованием."""
 
-    default_name = "numeric"
-    requires = [Init]
+    default_name: ClassVar[str] = "numeric"
+    requires: ClassVar[list[type[Transformer]]] = [Init]
 
     def __init__(
         self,
@@ -264,8 +302,8 @@ class Numeric(Transformer):
 class Category(Transformer):
     """Генерирует категориальную колонку на основе числовых фич."""
 
-    default_name = "category"
-    requires = [Numeric]
+    default_name: ClassVar[str] = "category"
+    requires: ClassVar[list[type[Transformer]]] = [Numeric]
 
     def __init__(
         self,
@@ -274,6 +312,7 @@ class Category(Transformer):
         noise_ratio: float = 0.0,
         seed: int | None = None,
         name: str | None = None,
+        max_kmeans_samples: int = 100_000,
     ):
         """Инициализирует генератор категорий.
 
@@ -283,12 +322,14 @@ class Category(Transformer):
             noise_ratio: Доля значений для случайной подмены (только для quantile).
             seed: Seed для воспроизводимости.
             name: Кастомное имя трансформера.
+            max_kmeans_samples: Максимум строк для обучения KMeans (сэмплирование).
         """
         super().__init__(name)
         self.cardinality = cardinality
         self.method = method
         self.noise_ratio = noise_ratio
         self.seed = seed
+        self.max_kmeans_samples = max_kmeans_samples
 
     def _generate_kmeans(
         self,
@@ -297,6 +338,9 @@ class Category(Transformer):
         numeric_cols: list[str],
     ) -> np.ndarray:
         """Генерирует категории через MiniBatchKMeans.
+
+        Для больших данных использует сэмплирование: обучает KMeans на выборке,
+        затем применяет predict ко всем данным чанками.
 
         Args:
             db: Соединение с DuckDB.
@@ -307,16 +351,41 @@ class Category(Transformer):
             Массив меток категорий.
         """
         cols_sql = ", ".join(numeric_cols)
-        features = db.execute(f"SELECT {cols_sql} FROM '{meta.file_path}'").fetchnumpy()
 
-        features_array = np.column_stack([features[col] for col in numeric_cols])
+        # Обучаем KMeans на сэмпле
+        if meta.row_count > self.max_kmeans_samples:
+            sample_query = f"""
+                SELECT {cols_sql} FROM '{meta.file_path}'
+                USING SAMPLE {self.max_kmeans_samples}
+            """
+            sample_data = db.execute(sample_query).fetchnumpy()
+            sample_array = np.column_stack([sample_data[col] for col in numeric_cols])
+        else:
+            full_data = db.execute(f"SELECT {cols_sql} FROM '{meta.file_path}'").fetchnumpy()
+            sample_array = np.column_stack([full_data[col] for col in numeric_cols])
 
         kmeans = MiniBatchKMeans(
             n_clusters=self.cardinality,
             random_state=self.seed,
-            n_init="auto",
+            n_init=10,
         )
-        return kmeans.fit_predict(features_array)
+        kmeans.fit(sample_array)
+
+        # Predict чанками для экономии памяти
+        chunk_size = 100_000
+        labels = np.empty(meta.row_count, dtype=np.int32)
+
+        for offset in range(0, meta.row_count, chunk_size):
+            limit = min(chunk_size, meta.row_count - offset)
+            chunk_query = f"""
+                SELECT {cols_sql} FROM '{meta.file_path}'
+                LIMIT {limit} OFFSET {offset}
+            """
+            chunk_data = db.execute(chunk_query).fetchnumpy()
+            chunk_array = np.column_stack([chunk_data[col] for col in numeric_cols])
+            labels[offset:offset + limit] = kmeans.predict(chunk_array)
+
+        return labels
 
     def _generate_quantile(
         self,
@@ -402,8 +471,8 @@ class Category(Transformer):
 class RegressionTarget(Transformer):
     """Генерирует целевую переменную для регрессии на основе существующих фич."""
 
-    default_name = "regression_target"
-    requires = [Numeric]
+    default_name: ClassVar[str] = "regression_target"
+    requires: ClassVar[list[type[Transformer]]] = [Numeric]
 
     def __init__(
         self,
@@ -808,8 +877,8 @@ class RegressionTarget(Transformer):
 class BinaryTarget(Transformer):
     """Генерирует целевую переменную для бинарной классификации."""
 
-    default_name = "binary_target"
-    requires = [Numeric]
+    default_name: ClassVar[str] = "binary_target"
+    requires: ClassVar[list[type[Transformer]]] = [Numeric]
 
     def __init__(
         self,
@@ -1042,8 +1111,8 @@ class BinaryTarget(Transformer):
 class MulticlassTarget(Transformer):
     """Генерирует целевую переменную для многоклассовой классификации."""
 
-    default_name = "multiclass_target"
-    requires = [Numeric]
+    default_name: ClassVar[str] = "multiclass_target"
+    requires: ClassVar[list[type[Transformer]]] = [Numeric]
 
     def __init__(
         self,
@@ -1168,8 +1237,8 @@ class MulticlassTarget(Transformer):
 class RankingTarget(Transformer):
     """Генерирует целевую переменную для ранжирования."""
 
-    default_name = "ranking_target"
-    requires = [RegressionTarget, Category]
+    default_name: ClassVar[str] = "ranking_target"
+    requires: ClassVar[list[type[Transformer]]] = [RegressionTarget, Category]
 
     def __init__(
         self,
@@ -1251,8 +1320,8 @@ class RankingTarget(Transformer):
 class Datetime(Transformer):
     """Генерирует колонку timestamp на основе таргета и фичи."""
 
-    default_name = "datetime"
-    requires = [RegressionTarget]
+    default_name: ClassVar[str] = "datetime"
+    requires: ClassVar[list[type[Transformer]]] = [RegressionTarget]
 
     def __init__(
         self,
@@ -1328,8 +1397,6 @@ class Datetime(Transformer):
         )
 
         # Преобразуем в timestamps
-        from datetime import datetime as dt
-
         start_ts = dt.strptime(self.start_date, "%Y-%m-%d").timestamp()
         end_ts = dt.strptime(self.end_date, "%Y-%m-%d").timestamp()
 
@@ -1369,8 +1436,8 @@ class Datetime(Transformer):
 class Date(Transformer):
     """Извлекает date из timestamp."""
 
-    default_name = "date"
-    requires = [Datetime]
+    default_name: ClassVar[str] = "date"
+    requires: ClassVar[list[type[Transformer]]] = [Datetime]
 
     def transform(self, db: duckdb.DuckDBPyConnection, meta: Meta) -> Meta:
         """Создаёт колонку date из timestamp.
@@ -1400,8 +1467,8 @@ class Date(Transformer):
 class Boolean(Transformer):
     """Генерирует boolean колонку через бинаризацию фичи."""
 
-    default_name = "boolean"
-    requires = [Numeric]
+    default_name: ClassVar[str] = "boolean"
+    requires: ClassVar[list[type[Transformer]]] = [Numeric]
 
     def __init__(
         self,
@@ -1484,8 +1551,8 @@ class Boolean(Transformer):
 class Nullable(Transformer):
     """Добавляет NULL в существующие колонки."""
 
-    default_name = "nullable"
-    requires = [Numeric]
+    default_name: ClassVar[str] = "nullable"
+    requires: ClassVar[list[type[Transformer]]] = [Numeric]
 
     def __init__(
         self,
@@ -1605,12 +1672,15 @@ class Pipeline:
             Итоговая Meta после выполнения всех шагов.
         """
         db = duckdb.connect()
-        meta = Meta(file_path=f"{self.config.output_path}/main.parquet")
+        try:
+            meta = Meta(file_path=f"{self.config.output_path}/main.parquet")
 
-        for step in self.steps:
-            meta = step.transform(db, meta)
+            for step in self.steps:
+                meta = step.transform(db, meta)
 
-        return meta
+            return meta
+        finally:
+            db.close()
 
 
 class PipelineFactory:
@@ -1699,10 +1769,13 @@ class PipelineFactory:
 
             # Запускаем калибровку
             db = duckdb.connect()
-            meta = Meta(file_path=calibration_path)
+            try:
+                meta = Meta(file_path=calibration_path)
 
-            for step in sorted_steps:
-                meta = step.transform(db, meta)
+                for step in sorted_steps:
+                    meta = step.transform(db, meta)
+            finally:
+                db.close()
 
             # Измеряем размер
             calibration_size = os.path.getsize(calibration_path)

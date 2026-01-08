@@ -1139,13 +1139,19 @@ class TargetGeneratorMixin:
 
         return y
 
-    def _get_regression_generators(self) -> dict:
-        """Возвращает словарь методов генерации для регрессии.
+    def _get_generator(self, method: str) -> TargetGeneratorFunc:
+        """Возвращает функцию генерации по имени метода.
+
+        Args:
+            method: Имя метода генерации.
 
         Returns:
-            Словарь {имя_метода: функция_генерации}.
+            Функция генерации таргета.
+
+        Raises:
+            ValueError: Если метод не найден.
         """
-        return {
+        generators: dict[str, TargetGeneratorFunc] = {
             "linear": self._generate_linear,
             "polynomial": self._generate_polynomial,
             "nonlinear": self._generate_nonlinear,
@@ -1157,6 +1163,12 @@ class TargetGeneratorMixin:
             "step": self._generate_step,
             "radial": self._generate_radial,
         }
+        if method not in generators:
+            raise ValueError(
+                f"Неизвестный метод: {method}. "
+                f"Доступные методы регрессии: {sorted(generators.keys())}"
+            )
+        return generators[method]
 
 
 class RegressionTarget(TargetGeneratorMixin, Transformer):
@@ -1260,14 +1272,7 @@ class RegressionTarget(TargetGeneratorMixin, Transformer):
         """
         informative_cols = meta.get_columns_by_tag("informative", "numeric")
         col_name = "target_reg"
-
-        generators = self._get_regression_generators()
-        if self.method not in generators:
-            raise ValueError(
-                f"Неизвестный метод: {self.method}. Доступны: {list(generators.keys())}"
-            )
-
-        generator = generators[self.method]
+        generator = self._get_generator(self.method)
 
         # Оцениваем масштаб шума на sample (отдельный rng для изоляции)
         estimation_rng = np.random.default_rng(self.seed)
@@ -1477,16 +1482,13 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
         informative_cols = meta.get_columns_by_tag("informative", "numeric")
         col_name = "target_bin"
         cols_sql = ", ".join(informative_cols)
-
         classification_methods = {"xor", "circles", "moons", "clusters"}
-        regression_generators = self._get_regression_generators()
+        is_regression_method = self.method not in classification_methods
 
-        # Валидация метода
-        all_methods = list(classification_methods) + list(regression_generators.keys())
-        if self.method not in all_methods:
-            raise ValueError(
-                f"Неизвестный метод: {self.method}. Доступны: {all_methods}"
-            )
+        # Валидация регрессионного метода (classification методы валидны по умолчанию)
+        generator = None
+        if is_regression_method:
+            generator = self._get_generator(self.method)
 
         # Предвычисляем статистики/пороги (используем отдельный rng для изоляции)
         stats = None
@@ -1517,7 +1519,7 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
                 db,
                 meta,
                 informative_cols,
-                regression_generators[self.method],
+                generator,
                 estimation_rng,
             )
 
@@ -1539,7 +1541,7 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
                     target = kmeans.predict(features).astype(np.int8)
                 else:
                     # Регрессионные методы
-                    latent = regression_generators[self.method](features, rng)
+                    latent = generator(features, rng)
                     target = (latent > threshold_value).astype(np.int8)
 
                 # Добавляем шум через flip
@@ -1646,14 +1648,7 @@ class MulticlassTarget(TargetGeneratorMixin, Transformer):
         """
         informative_cols = meta.get_columns_by_tag("informative", "numeric")
         col_name = "target_multi"
-
-        generators = self._get_regression_generators()
-        if self.method not in generators:
-            raise ValueError(
-                f"Неизвестный метод: {self.method}. Доступны: {list(generators.keys())}"
-            )
-
-        generator = generators[self.method]
+        generator = self._get_generator(self.method)
 
         # Оцениваем границы бинов на sample (отдельный rng для изоляции)
         estimation_rng = np.random.default_rng(self.seed)

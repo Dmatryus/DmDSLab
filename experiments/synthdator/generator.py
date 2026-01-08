@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import pickle
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime as dt
@@ -23,6 +24,38 @@ DEFAULT_KMEANS_SAMPLES = 100_000
 DEFAULT_CALIBRATION_ROWS = 1_000
 DEFAULT_STEP_BINS = 5
 MIN_ROW_COUNT = 100
+
+# Математические константы
+EPSILON = 1e-10  # Защита от деления на ноль
+
+# Коэффициенты для генерации таргетов
+COEF_SQUARED_SCALE = 0.5  # Масштаб квадратичных членов в polynomial
+COEF_INTERACTION_SCALE = 0.3  # Масштаб взаимодействий в polynomial
+COEF_EXP_SCALE = 0.1  # Масштаб коэффициентов в exponential
+COEF_NONLINEAR_EXP_SCALE = 0.5  # Масштаб exp в nonlinear
+COEF_OTHER_FEATURES_SCALE = 0.5  # Масштаб для дополнительных фич в step
+STEP_VALUES_SCALE = 10  # Масштаб значений ступеней
+
+# Ограничения для численной стабильности
+EXP_CLIP_RANGE = (-3, 3)  # Клиппинг для exp в nonlinear
+EXP_LINEAR_CLIP_RANGE = (-5, 5)  # Клиппинг для exp в exponential
+
+# Параметры Friedman функций (оригинальные диапазоны)
+FRIEDMAN_X0_MAX = 100
+FRIEDMAN_X1_START = 40 * np.pi
+FRIEDMAN_X1_SCALE = 520 * np.pi
+FRIEDMAN_X3_MIN = 1
+FRIEDMAN_X3_SCALE = 10
+
+# Параметры RBF
+RBF_MAX_CENTERS = 5
+RBF_VARIANCE_DIVISOR = 2
+
+# Параметры генерации таргетов
+MAX_INTERACTION_PAIRS = 3  # Макс. пар взаимодействий в polynomial
+MAX_SIN_FEATURES = 3  # Макс. фич для sin в nonlinear
+MIN_COS_FEATURES = 3  # Мин. индекс фич для cos в nonlinear
+MAX_COS_FEATURES = 6  # Макс. фич для cos в nonlinear
 
 
 def _atomic_write(db: duckdb.DuckDBPyConnection, query: str, file_path: str) -> None:
@@ -114,6 +147,28 @@ class GeneratorConfig:
             if "должен быть" in str(e):
                 raise
             raise ValueError(f"Некорректный формат даты (ожидается YYYY-MM-DD): {e}")
+
+        # Валидация совместимости task и target_method
+        regression_methods = {
+            "linear", "polynomial", "nonlinear",
+            "friedman1", "friedman2", "friedman3",
+            "exponential", "logarithmic", "step", "radial",
+        }
+        classification_methods = {"xor", "circles", "moons", "clusters"}
+
+        if self.task in ("binary", "multiclass") and self.target_method in regression_methods:
+            logger.warning(
+                "target_method '%s' является регрессионным и будет бинаризован "
+                "для задачи '%s'",
+                self.target_method,
+                self.task,
+            )
+
+        if self.task == "regression" and self.target_method in classification_methods:
+            raise ValueError(
+                f"target_method '{self.target_method}' не поддерживается для задачи "
+                f"'regression'. Используйте один из: {sorted(regression_methods)}"
+            )
 
 
 @dataclass
@@ -258,57 +313,59 @@ class Numeric(Transformer):
         n_informative = int(self.n_features * self.informative_ratio)
 
         n_chunks = (meta.row_count + self.chunk_size - 1) // self.chunk_size
-        temp_files = []
+        temp_files: list[str] = []
 
-        for chunk_idx in range(n_chunks):
-            start_idx = chunk_idx * self.chunk_size
-            end_idx = min(start_idx + self.chunk_size, meta.row_count)
-            chunk_rows = end_idx - start_idx
+        try:
+            for chunk_idx in range(n_chunks):
+                start_idx = chunk_idx * self.chunk_size
+                end_idx = min(start_idx + self.chunk_size, meta.row_count)
+                chunk_rows = end_idx - start_idx
 
-            features, _ = make_classification(
-                n_samples=chunk_rows,
-                n_features=self.n_features,
-                n_informative=n_informative,
-                n_redundant=0,
-                n_clusters_per_class=1,
-                random_state=None if self.seed is None else self.seed + chunk_idx,
-            )
+                features, _ = make_classification(
+                    n_samples=chunk_rows,
+                    n_features=self.n_features,
+                    n_informative=n_informative,
+                    n_redundant=0,
+                    n_clusters_per_class=1,
+                    random_state=None if self.seed is None else self.seed + chunk_idx,
+                )
 
-            ids = np.arange(start_idx, end_idx, dtype=np.int64)
-            chunk_data = {"id": ids}
-            for i, name in enumerate(feature_names):
-                chunk_data[name] = features[:, i]
-            db.register("chunk_np", chunk_data)
+                ids = np.arange(start_idx, end_idx, dtype=np.int64)
+                chunk_data = {"id": ids}
+                for i, name in enumerate(feature_names):
+                    chunk_data[name] = features[:, i]
+                db.register("chunk_np", chunk_data)
 
-            chunk_file = f"{meta.file_path}.features_chunk_{chunk_idx}.parquet"
-            temp_files.append(chunk_file)
+                chunk_file = f"{meta.file_path}.features_chunk_{chunk_idx}.parquet"
+                temp_files.append(chunk_file)
 
-            feature_cols = ", ".join(feature_names)
-            db.execute(
+                feature_cols = ", ".join(feature_names)
+                db.execute(
+                    f"""
+                    COPY (
+                        SELECT id, {feature_cols}
+                        FROM chunk_np
+                    ) TO '{chunk_file}' (FORMAT PARQUET)
+                """
+                )
+                db.unregister("chunk_np")
+
+            # Объединяем чанки и джойним с main
+            chunks_union = " UNION ALL ".join([f"SELECT * FROM '{f}'" for f in temp_files])
+            _atomic_write(
+                db,
                 f"""
-                COPY (
-                    SELECT id, {feature_cols}
-                    FROM chunk_np
-                ) TO '{chunk_file}' (FORMAT PARQUET)
-            """
+                    SELECT m.*, f.* EXCLUDE (id)
+                    FROM '{meta.file_path}' AS m
+                    JOIN ({chunks_union}) AS f USING (id)
+                """,
+                meta.file_path,
             )
-            db.unregister("chunk_np")
-
-        # Объединяем чанки и джойним с main
-        chunks_union = " UNION ALL ".join([f"SELECT * FROM '{f}'" for f in temp_files])
-        _atomic_write(
-            db,
-            f"""
-                SELECT m.*, f.* EXCLUDE (id)
-                FROM '{meta.file_path}' AS m
-                JOIN ({chunks_union}) AS f USING (id)
-            """,
-            meta.file_path,
-        )
-
-        # Удаляем временные файлы
-        for f in temp_files:
-            os.remove(f)
+        finally:
+            # Удаляем временные файлы в любом случае
+            for f in temp_files:
+                if os.path.exists(f):
+                    os.remove(f)
 
         # Обновляем meta
         for i, col_name in enumerate(feature_names):
@@ -529,12 +586,12 @@ class TargetGeneratorMixin:
         y = features @ coef_linear
 
         # Квадратичная часть
-        coef_squared = rng.standard_normal(n_features) * 0.5
+        coef_squared = rng.standard_normal(n_features) * COEF_SQUARED_SCALE
         y += (features**2) @ coef_squared
 
         # Взаимодействия (первые пары фич)
-        for i in range(min(n_features - 1, 3)):
-            coef_inter = rng.standard_normal() * 0.3
+        for i in range(min(n_features - 1, MAX_INTERACTION_PAIRS)):
+            coef_inter = rng.standard_normal() * COEF_INTERACTION_SCALE
             y += coef_inter * features[:, i] * features[:, i + 1]
 
         return y
@@ -555,19 +612,19 @@ class TargetGeneratorMixin:
         y = np.zeros(features.shape[0])
 
         # sin от первых фич
-        for i in range(min(n_features, 3)):
+        for i in range(min(n_features, MAX_SIN_FEATURES)):
             coef = rng.standard_normal()
             y += coef * np.sin(features[:, i])
 
         # cos от следующих
-        for i in range(3, min(n_features, 6)):
+        for i in range(MIN_COS_FEATURES, min(n_features, MAX_COS_FEATURES)):
             coef = rng.standard_normal()
             y += coef * np.cos(features[:, i])
 
         # exp (с ограничением чтобы не взорвалось)
-        if n_features > 6:
-            coef = rng.standard_normal() * 0.5
-            clipped = np.clip(features[:, 6], -3, 3)
+        if n_features > MAX_COS_FEATURES:
+            coef = rng.standard_normal() * COEF_NONLINEAR_EXP_SCALE
+            clipped = np.clip(features[:, MAX_COS_FEATURES], *EXP_CLIP_RANGE)
             y += coef * np.exp(clipped)
 
         # Взаимодействие
@@ -596,7 +653,7 @@ class TargetGeneratorMixin:
 
         # Нормализуем фичи в [0, 1] для соответствия оригинальной формуле
         f_norm = (features - features.min(axis=0)) / (
-            features.max(axis=0) - features.min(axis=0) + 1e-10
+            features.max(axis=0) - features.min(axis=0) + EPSILON
         )
 
         y = np.zeros(features.shape[0])
@@ -631,15 +688,15 @@ class TargetGeneratorMixin:
         # Масштабируем как в оригинале: x0 in [0,100], x1 in [40π, 560π], x2 in [0,1], x3 in [1,11]
         f = features.copy()
         f_min, f_max = f.min(axis=0), f.max(axis=0)
-        f_norm = (f - f_min) / (f_max - f_min + 1e-10)
+        f_norm = (f - f_min) / (f_max - f_min + EPSILON)
 
-        x0 = f_norm[:, 0] * 100
-        x1 = 40 * np.pi + f_norm[:, 1] * 520 * np.pi
+        x0 = f_norm[:, 0] * FRIEDMAN_X0_MAX
+        x1 = FRIEDMAN_X1_START + f_norm[:, 1] * FRIEDMAN_X1_SCALE
         x2 = f_norm[:, 2]
-        x3 = 1 + f_norm[:, 3] * 10
+        x3 = FRIEDMAN_X3_MIN + f_norm[:, 3] * FRIEDMAN_X3_SCALE
 
         # Защита от деления на ноль
-        denom = x1 * x3 + 1e-10
+        denom = x1 * x3 + EPSILON
         inner = x1 * x2 - 1 / denom
 
         return np.sqrt(x0**2 + inner**2)
@@ -662,14 +719,14 @@ class TargetGeneratorMixin:
 
         f = features.copy()
         f_min, f_max = f.min(axis=0), f.max(axis=0)
-        f_norm = (f - f_min) / (f_max - f_min + 1e-10)
+        f_norm = (f - f_min) / (f_max - f_min + EPSILON)
 
-        x0 = f_norm[:, 0] * 100 + 1e-10  # Защита от деления на ноль
-        x1 = 40 * np.pi + f_norm[:, 1] * 520 * np.pi
+        x0 = f_norm[:, 0] * FRIEDMAN_X0_MAX + EPSILON  # Защита от деления на ноль
+        x1 = FRIEDMAN_X1_START + f_norm[:, 1] * FRIEDMAN_X1_SCALE
         x2 = f_norm[:, 2]
-        x3 = 1 + f_norm[:, 3] * 10
+        x3 = FRIEDMAN_X3_MIN + f_norm[:, 3] * FRIEDMAN_X3_SCALE
 
-        denom = x1 * x3 + 1e-10
+        denom = x1 * x3 + EPSILON
         inner = x1 * x2 - 1 / denom
 
         return np.arctan(inner / x0)
@@ -689,11 +746,11 @@ class TargetGeneratorMixin:
         n_features = features.shape[1]
 
         # Малые коэффициенты чтобы exp не взорвался
-        coef = rng.standard_normal(n_features) * 0.1
+        coef = rng.standard_normal(n_features) * COEF_EXP_SCALE
         linear = features @ coef
 
         # Клиппинг для стабильности
-        linear = np.clip(linear, -5, 5)
+        linear = np.clip(linear, *EXP_LINEAR_CLIP_RANGE)
 
         return np.exp(linear)
 
@@ -738,14 +795,14 @@ class TargetGeneratorMixin:
         bins = np.percentile(x, percentiles)
 
         # Случайные значения для каждой ступени
-        step_values = rng.standard_normal(n_steps) * 10
+        step_values = rng.standard_normal(n_steps) * STEP_VALUES_SCALE
         step_idx = np.digitize(x, bins[1:-1])
 
         y = step_values[step_idx]
 
         # Добавляем влияние других фич
         if n_features > 1:
-            coef = rng.standard_normal(n_features - 1) * 0.5
+            coef = rng.standard_normal(n_features - 1) * COEF_OTHER_FEATURES_SCALE
             y += features[:, 1:] @ coef
 
         return y
@@ -763,7 +820,7 @@ class TargetGeneratorMixin:
             Вектор таргета.
         """
         n_samples, n_features = features.shape
-        n_centers = min(5, n_features)
+        n_centers = min(RBF_MAX_CENTERS, n_features)
 
         # Случайные центры в пространстве фич
         centers = rng.standard_normal((n_centers, n_features))
@@ -775,9 +832,28 @@ class TargetGeneratorMixin:
             # Евклидово расстояние до центра
             dist = np.sqrt(np.sum((features - centers[i]) ** 2, axis=1))
             # RBF-ядро
-            y += weights[i] * np.exp(-(dist**2) / (2 * n_features))
+            y += weights[i] * np.exp(-(dist**2) / (RBF_VARIANCE_DIVISOR * n_features))
 
         return y
+
+    def _get_regression_generators(self) -> dict:
+        """Возвращает словарь методов генерации для регрессии.
+
+        Returns:
+            Словарь {имя_метода: функция_генерации}.
+        """
+        return {
+            "linear": self._generate_linear,
+            "polynomial": self._generate_polynomial,
+            "nonlinear": self._generate_nonlinear,
+            "friedman1": self._generate_friedman1,
+            "friedman2": self._generate_friedman2,
+            "friedman3": self._generate_friedman3,
+            "exponential": self._generate_exponential,
+            "logarithmic": self._generate_logarithmic,
+            "step": self._generate_step,
+            "radial": self._generate_radial,
+        }
 
 
 class RegressionTarget(TargetGeneratorMixin, Transformer):
@@ -850,19 +926,7 @@ class RegressionTarget(TargetGeneratorMixin, Transformer):
 
         # Генерируем таргет в зависимости от метода
         rng = np.random.default_rng(self.seed)
-
-        generators = {
-            "linear": self._generate_linear,
-            "polynomial": self._generate_polynomial,
-            "nonlinear": self._generate_nonlinear,
-            "friedman1": self._generate_friedman1,
-            "friedman2": self._generate_friedman2,
-            "friedman3": self._generate_friedman3,
-            "exponential": self._generate_exponential,
-            "logarithmic": self._generate_logarithmic,
-            "step": self._generate_step,
-            "radial": self._generate_radial,
-        }
+        generators = self._get_regression_generators()
 
         if self.method not in generators:
             raise ValueError(
@@ -981,7 +1045,7 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
             if features.shape[1] >= 2
             else np.column_stack([features[:, 0], features[:, 0]])
         )
-        f_norm = (f - f.mean(axis=0)) / (f.std(axis=0) + 1e-10)
+        f_norm = (f - f.mean(axis=0)) / (f.std(axis=0) + EPSILON)
 
         # Расстояние от центра
         dist = np.sqrt(f_norm[:, 0] ** 2 + f_norm[:, 1] ** 2)
@@ -1006,7 +1070,7 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
             if features.shape[1] >= 2
             else np.column_stack([features[:, 0], features[:, 0]])
         )
-        f_norm = (f - f.mean(axis=0)) / (f.std(axis=0) + 1e-10)
+        f_norm = (f - f.mean(axis=0)) / (f.std(axis=0) + EPSILON)
 
         # Полумесяцы: y > sin(x) для одного класса
         boundary = np.sin(f_norm[:, 0] * np.pi)
@@ -1062,18 +1126,7 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
             target = classification_methods[self.method](features, rng)
         else:
             # Регрессионные методы — бинаризуем по квантилю
-            regression_generators = {
-                "linear": self._generate_linear,
-                "polynomial": self._generate_polynomial,
-                "nonlinear": self._generate_nonlinear,
-                "friedman1": self._generate_friedman1,
-                "friedman2": self._generate_friedman2,
-                "friedman3": self._generate_friedman3,
-                "exponential": self._generate_exponential,
-                "logarithmic": self._generate_logarithmic,
-                "step": self._generate_step,
-                "radial": self._generate_radial,
-            }
+            regression_generators = self._get_regression_generators()
 
             if self.method not in regression_generators:
                 all_methods = list(classification_methods.keys()) + list(
@@ -1175,18 +1228,7 @@ class MulticlassTarget(TargetGeneratorMixin, Transformer):
         rng = np.random.default_rng(self.seed)
 
         # Генерируем скрытую переменную
-        generators = {
-            "linear": self._generate_linear,
-            "polynomial": self._generate_polynomial,
-            "nonlinear": self._generate_nonlinear,
-            "friedman1": self._generate_friedman1,
-            "friedman2": self._generate_friedman2,
-            "friedman3": self._generate_friedman3,
-            "exponential": self._generate_exponential,
-            "logarithmic": self._generate_logarithmic,
-            "step": self._generate_step,
-            "radial": self._generate_radial,
-        }
+        generators = self._get_regression_generators()
 
         if self.method not in generators:
             raise ValueError(
@@ -1364,15 +1406,15 @@ class Datetime(Transformer):
         ids = data["id"]
 
         # Нормализуем в [0, 1]
-        target_norm = (target - target.min()) / (target.max() - target.min() + 1e-10)
+        target_norm = (target - target.min()) / (target.max() - target.min() + EPSILON)
         feature_norm = (feature - feature.min()) / (
-            feature.max() - feature.min() + 1e-10
+            feature.max() - feature.min() + EPSILON
         )
 
         # Линейная комбинация
         combined = self.target_weight * target_norm + self.feature_weight * feature_norm
         combined = (combined - combined.min()) / (
-            combined.max() - combined.min() + 1e-10
+            combined.max() - combined.min() + EPSILON
         )
 
         # Преобразуем в timestamps
@@ -1644,21 +1686,74 @@ class Pipeline:
         self.steps = steps
         self.config = config
 
+    def _meta_pickle_path(self) -> str:
+        """Возвращает путь к файлу meta.pkl.
+
+        Returns:
+            Путь к файлу meta.pkl.
+        """
+        return f"{self.config.output_path}/meta.pkl"
+
+    def _save_meta(self, meta: Meta) -> None:
+        """Сохраняет meta в pickle.
+
+        Args:
+            meta: Объект Meta для сохранения.
+        """
+        with open(self._meta_pickle_path(), "wb") as f:
+            pickle.dump(meta, f)
+
+    def _load_meta(self) -> Meta | None:
+        """Загружает meta из pickle если существует.
+
+        Returns:
+            Объект Meta если файл существует, иначе None.
+        """
+        path = self._meta_pickle_path()
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                return pickle.load(f)
+        return None
+
     def run(self) -> Meta:
-        """Запускает все шаги последовательно.
+        """Запускает все шаги последовательно с поддержкой возобновления.
+
+        Если файл meta.pkl существует, пропускает уже выполненные шаги.
+        После каждого шага сохраняет прогресс в meta.pkl.
 
         Returns:
             Итоговая Meta после выполнения всех шагов.
         """
         logger.info("Запуск pipeline с %d шагами", len(self.steps))
-        db = duckdb.connect()
-        try:
+
+        # Пытаемся загрузить существующий прогресс
+        meta = self._load_meta()
+        if meta is not None:
+            logger.info(
+                "Загружен прогресс: выполнено %d шагов", len(meta.completed_steps)
+            )
+        else:
             meta = Meta(file_path=f"{self.config.output_path}/main.parquet")
 
+        db = duckdb.connect()
+        try:
             for i, step in enumerate(self.steps, 1):
+                # Пропускаем уже выполненные шаги
+                if step.name in meta.completed_steps:
+                    logger.info(
+                        "[%d/%d] Пропуск (уже выполнен): %s",
+                        i,
+                        len(self.steps),
+                        step.name,
+                    )
+                    continue
+
                 logger.info("[%d/%d] Выполняется: %s", i, len(self.steps), step.name)
                 meta = step.transform(db, meta)
                 logger.debug("Завершён шаг %s, строк: %d", step.name, meta.row_count)
+
+                # Сохраняем прогресс после каждого шага
+                self._save_meta(meta)
 
             logger.info("Pipeline завершён успешно, строк: %d", meta.row_count)
             return meta
@@ -1777,6 +1872,159 @@ class PipelineFactory:
 
             return result_rows
 
+    def _has_step_of_type(
+        self, steps: list[Transformer], step_type: type[Transformer]
+    ) -> bool:
+        """Проверяет наличие шага заданного типа.
+
+        Args:
+            steps: Список трансформеров.
+            step_type: Тип трансформера для поиска.
+
+        Returns:
+            True если шаг такого типа уже есть в списке.
+        """
+        return any(isinstance(s, step_type) for s in steps)
+
+    def _add_base_steps(
+        self, config: GeneratorConfig, steps: list[Transformer]
+    ) -> None:
+        """Добавляет базовые шаги: Init и Numeric.
+
+        Args:
+            config: Конфигурация генератора.
+            steps: Список шагов для модификации.
+        """
+        steps.append(Init(row_count=0))
+        steps.append(
+            Numeric(
+                n_features=config.n_numeric,
+                informative_ratio=config.informative_ratio,
+                seed=config.seed,
+            )
+        )
+
+    def _add_category_steps(
+        self, config: GeneratorConfig, steps: list[Transformer]
+    ) -> None:
+        """Добавляет шаги категорий.
+
+        Args:
+            config: Конфигурация генератора.
+            steps: Список шагов для модификации.
+        """
+        for i in range(config.n_categories):
+            steps.append(
+                Category(
+                    cardinality=config.category_cardinality,
+                    method=config.category_method,
+                    seed=config.seed,
+                    name=f"category_{i}",
+                )
+            )
+
+    def _add_target_steps(
+        self, config: GeneratorConfig, steps: list[Transformer]
+    ) -> None:
+        """Добавляет шаги таргетов в зависимости от задачи.
+
+        Args:
+            config: Конфигурация генератора.
+            steps: Список шагов для модификации.
+        """
+        if config.task == "regression":
+            steps.append(
+                RegressionTarget(
+                    method=config.target_method,
+                    noise=config.target_noise,
+                    seed=config.seed,
+                )
+            )
+        elif config.task == "binary":
+            steps.append(
+                BinaryTarget(
+                    method=config.target_method,
+                    seed=config.seed,
+                )
+            )
+        elif config.task == "multiclass":
+            steps.append(
+                MulticlassTarget(
+                    n_classes=config.n_classes,
+                    method=config.target_method,
+                    seed=config.seed,
+                )
+            )
+        elif config.task == "ranking":
+            # Ranking требует regression target + category
+            steps.append(
+                RegressionTarget(
+                    method=config.target_method,
+                    noise=config.target_noise,
+                    seed=config.seed,
+                )
+            )
+            if config.n_categories == 0:
+                steps.append(Category(seed=config.seed, name="category_for_ranking"))
+            steps.append(RankingTarget())
+
+    def _add_datetime_steps(
+        self, config: GeneratorConfig, steps: list[Transformer]
+    ) -> None:
+        """Добавляет шаги datetime.
+
+        Args:
+            config: Конфигурация генератора.
+            steps: Список шагов для модификации.
+        """
+        if not config.with_datetime:
+            return
+
+        # Datetime требует RegressionTarget — добавляем если ещё нет
+        if not self._has_step_of_type(steps, RegressionTarget):
+            steps.append(
+                RegressionTarget(
+                    method=config.target_method,
+                    noise=config.target_noise,
+                    seed=config.seed,
+                )
+            )
+
+        steps.append(
+            Datetime(
+                start_date=config.datetime_start,
+                end_date=config.datetime_end,
+                seed=config.seed,
+            )
+        )
+
+        if config.with_date:
+            steps.append(Date())
+
+    def _add_boolean_steps(
+        self, config: GeneratorConfig, steps: list[Transformer]
+    ) -> None:
+        """Добавляет boolean шаги.
+
+        Args:
+            config: Конфигурация генератора.
+            steps: Список шагов для модификации.
+        """
+        for i in range(config.n_booleans):
+            steps.append(Boolean(seed=config.seed, name=f"boolean_{i}"))
+
+    def _add_nullable_step(
+        self, config: GeneratorConfig, steps: list[Transformer]
+    ) -> None:
+        """Добавляет Nullable шаг.
+
+        Args:
+            config: Конфигурация генератора.
+            steps: Список шагов для модификации.
+        """
+        if config.nullable_ratio > 0:
+            steps.append(Nullable(ratio=config.nullable_ratio, seed=config.seed))
+
     def _build_steps(self, config: GeneratorConfig) -> list[Transformer]:
         """Определяет какие шаги нужны на основе конфига.
 
@@ -1787,101 +2035,22 @@ class PipelineFactory:
             Список трансформеров (ещё не отсортированный).
         """
         steps: list[Transformer] = []
-        seed = config.seed
 
-        # Init всегда нужен — row_count будет определён позже через калибровку
-        steps.append(Init(row_count=0))
-
-        # Numeric всегда нужен как основа
-        steps.append(
-            Numeric(
-                n_features=config.n_numeric,
-                informative_ratio=config.informative_ratio,
-                seed=seed,
-            )
-        )
-
-        # Категориальные фичи
-        for i in range(config.n_categories):
-            steps.append(
-                Category(
-                    cardinality=config.category_cardinality,
-                    method=config.category_method,
-                    seed=seed,
-                    name=f"category_{i}",
-                )
-            )
-
-        # Таргет в зависимости от задачи
-        if config.task == "regression":
-            steps.append(
-                RegressionTarget(
-                    method=config.target_method,
-                    noise=config.target_noise,
-                    seed=seed,
-                )
-            )
-        elif config.task == "binary":
-            steps.append(
-                BinaryTarget(
-                    method=config.target_method,
-                    seed=seed,
-                )
-            )
-        elif config.task == "multiclass":
-            steps.append(
-                MulticlassTarget(
-                    n_classes=config.n_classes,
-                    method=config.target_method,
-                    seed=seed,
-                )
-            )
-        elif config.task == "ranking":
-            # Ranking требует regression target + category
-            steps.append(
-                RegressionTarget(
-                    method=config.target_method,
-                    noise=config.target_noise,
-                    seed=seed,
-                )
-            )
-            if config.n_categories == 0:
-                steps.append(Category(seed=seed, name="category_for_ranking"))
-            steps.append(RankingTarget())
-
-        # Временные данные
-        if config.with_datetime:
-            if config.task != "regression" and config.task != "ranking":
-                # Datetime требует regression target
-                steps.append(
-                    RegressionTarget(
-                        method=config.target_method,
-                        noise=config.target_noise,
-                        seed=seed,
-                    )
-                )
-            steps.append(
-                Datetime(
-                    start_date=config.datetime_start,
-                    end_date=config.datetime_end,
-                    seed=seed,
-                )
-            )
-            if config.with_date:
-                steps.append(Date())
-
-        # Boolean фичи
-        for i in range(config.n_booleans):
-            steps.append(Boolean(seed=seed, name=f"boolean_{i}"))
-
-        # NULL
-        if config.nullable_ratio > 0:
-            steps.append(Nullable(ratio=config.nullable_ratio, seed=seed))
+        self._add_base_steps(config, steps)
+        self._add_category_steps(config, steps)
+        self._add_target_steps(config, steps)
+        self._add_datetime_steps(config, steps)
+        self._add_boolean_steps(config, steps)
+        self._add_nullable_step(config, steps)
 
         return steps
 
     def _topological_sort(self, steps: list[Transformer]) -> list[Transformer]:
         """Топологическая сортировка шагов по зависимостям.
+
+        Поддерживает множественные экземпляры одного класса (например, несколько Category).
+        Зависимость считается выполненной, когда выполнен хотя бы один экземпляр
+        требуемого класса.
 
         Args:
             steps: Список трансформеров.
@@ -1889,27 +2058,29 @@ class PipelineFactory:
         Returns:
             Отсортированный список трансформеров.
         """
-        # Строим словарь: класс -> экземпляр
-        step_by_class: dict[type[Transformer], Transformer] = {}
-        for step in steps:
-            step_by_class[type(step)] = step
+        # Строим множество доступных классов
+        available_classes: set[type[Transformer]] = {type(step) for step in steps}
 
-        # Строим граф зависимостей
         # in_degree[step] = количество невыполненных зависимостей
         in_degree: dict[Transformer, int] = {}
-        dependents: dict[type[Transformer], list[Transformer]] = {}
 
         for step in steps:
-            in_degree[step] = 0
+            count = 0
             for req_class in type(step).requires:
-                if req_class in step_by_class:
-                    in_degree[step] += 1
+                if req_class in available_classes:
+                    count += 1
+            in_degree[step] = count
 
+        # dependents[class] = список шагов, зависящих от этого класса
+        dependents: dict[type[Transformer], list[Transformer]] = {}
         for step in steps:
             for req_class in type(step).requires:
                 if req_class not in dependents:
                     dependents[req_class] = []
                 dependents[req_class].append(step)
+
+        # Отслеживаем какие классы уже выполнены
+        executed_classes: set[type[Transformer]] = set()
 
         # Алгоритм Кана
         result: list[Transformer] = []
@@ -1920,11 +2091,16 @@ class PipelineFactory:
             result.append(current)
 
             current_class = type(current)
-            if current_class in dependents:
-                for dependent in dependents[current_class]:
-                    in_degree[dependent] -= 1
-                    if in_degree[dependent] == 0:
-                        queue.append(dependent)
+
+            # Если это первый экземпляр данного класса — уменьшаем in_degree зависимых
+            if current_class not in executed_classes:
+                executed_classes.add(current_class)
+
+                if current_class in dependents:
+                    for dependent in dependents[current_class]:
+                        in_degree[dependent] -= 1
+                        if in_degree[dependent] == 0:
+                            queue.append(dependent)
 
         if len(result) != len(steps):
             raise ValueError("Обнаружен цикл в зависимостях трансформеров")

@@ -92,6 +92,7 @@ FRIEDMAN1_X4_COEF = 5
 
 # Параметры KMeans
 DEFAULT_KMEANS_N_INIT = 10
+DEFAULT_CATEGORY_CARDINALITY = 10
 
 # Защита от edge case в ранжировании: PERCENT_RANK()=1.0 даст n_levels,
 # что выходит за диапазон [0, n_levels-1]
@@ -395,7 +396,7 @@ class GeneratorConfig:
 
     # Категориальные фичи
     n_categories: int = 0
-    category_cardinality: int = 10
+    category_cardinality: int = DEFAULT_CATEGORY_CARDINALITY
     category_method: Literal["kmeans", "quantile"] = "kmeans"
 
     # Таргет
@@ -704,7 +705,7 @@ class Category(Transformer):
 
     def __init__(
         self,
-        cardinality: int = 10,
+        cardinality: int = DEFAULT_CATEGORY_CARDINALITY,
         method: Literal["kmeans", "quantile"] = "kmeans",
         noise_ratio: float = 0.0,
         seed: int | None = None,

@@ -176,9 +176,7 @@ def demo_full_featured():
             category_cardinality=8,
             task="regression",
             target_method="nonlinear",
-            with_datetime=True,
-            datetime_start="2022-01-01",
-            datetime_end="2024-01-01",
+            datetime_range=("2022-01-01", "2024-01-01"),
             with_date=True,
             n_booleans=2,
             nullable_ratio=0.05,
@@ -201,12 +199,14 @@ def demo_full_featured():
             logger.info("Sample:\n%s", sample.to_string())
 
             # Проверяем NULL
-            null_counts = db.execute(f"""
+            null_counts = db.execute(
+                f"""
                 SELECT
                     SUM(CASE WHEN numeric_0 IS NULL THEN 1 ELSE 0 END) as numeric_0_nulls,
                     SUM(CASE WHEN numeric_1 IS NULL THEN 1 ELSE 0 END) as numeric_1_nulls
                 FROM '{meta.file_path}'
-            """).fetchdf()
+            """
+            ).fetchdf()
             logger.info("NULL counts:\n%s", null_counts)
 
 

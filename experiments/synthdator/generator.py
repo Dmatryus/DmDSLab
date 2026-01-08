@@ -336,10 +336,9 @@ class GeneratorConfig:
         target_method: Метод генерации целевой переменной.
         target_noise: Уровень шума в таргете (0-1).
         n_classes: Количество классов для multiclass.
-        with_datetime: Генерировать ли колонку timestamp.
-        datetime_start: Начальная дата для timestamp.
-        datetime_end: Конечная дата для timestamp.
-        with_date: Генерировать ли колонку date из timestamp.
+        datetime_range: Диапазон дат для генерации timestamp как tuple (start, end)
+            в формате "YYYY-MM-DD". None если timestamp не нужен.
+        with_date: Генерировать ли колонку date из timestamp (требует datetime_range).
         n_booleans: Количество boolean колонок.
         nullable_ratio: Доля NULL значений (0-1).
     """
@@ -379,9 +378,7 @@ class GeneratorConfig:
     n_classes: int = 5
 
     # Временные данные
-    with_datetime: bool = False
-    datetime_start: str = "2020-01-01"
-    datetime_end: str = "2024-01-01"
+    datetime_range: tuple[str, str] | None = None
     with_date: bool = False
 
     # Boolean
@@ -417,15 +414,27 @@ class GeneratorConfig:
             raise ValueError("nullable_ratio должен быть в диапазоне [0, 1]")
 
         # Валидация дат
-        try:
-            start = dt.strptime(self.datetime_start, "%Y-%m-%d")
-            end = dt.strptime(self.datetime_end, "%Y-%m-%d")
-            if start >= end:
-                raise ValueError("datetime_start должен быть раньше datetime_end")
-        except ValueError as e:
-            if "должен быть" in str(e):
-                raise
-            raise ValueError(f"Некорректный формат даты (ожидается YYYY-MM-DD): {e}")
+        if self.datetime_range is not None:
+            try:
+                start = dt.strptime(self.datetime_range[0], "%Y-%m-%d")
+                end = dt.strptime(self.datetime_range[1], "%Y-%m-%d")
+                if start >= end:
+                    raise ValueError(
+                        "datetime_range[0] должен быть раньше datetime_range[1]"
+                    )
+            except ValueError as e:
+                if "должен быть" in str(e):
+                    raise
+                raise ValueError(
+                    f"Некорректный формат даты (ожидается YYYY-MM-DD): {e}"
+                )
+
+        # with_date требует datetime_range
+        if self.with_date and self.datetime_range is None:
+            raise ValueError(
+                "with_date=True требует datetime_range. "
+                "Колонка date извлекается из timestamp."
+            )
 
         # Валидация совместимости task и target_method
         regression_methods = {
@@ -2317,18 +2326,11 @@ class PipelineFactory:
         Raises:
             ValueError: Если конфигурация несовместима.
         """
-        # with_date требует with_datetime
-        if config.with_date and not config.with_datetime:
-            raise ValueError(
-                "with_date=True требует with_datetime=True. "
-                "Колонка date извлекается из timestamp."
-            )
-
         # Datetime требует таргет — проверяем что task задана или будет создан
         # implicit RegressionTarget
-        if config.with_datetime and config.task is None:
+        if config.datetime_range is not None and config.task is None:
             logger.warning(
-                "with_datetime=True при task=None: будет создан вспомогательный "
+                "datetime_range задан при task=None: будет создан вспомогательный "
                 "RegressionTarget для генерации timestamp."
             )
 
@@ -2401,9 +2403,7 @@ class PipelineFactory:
                 target_method=config.target_method,
                 target_noise=config.target_noise,
                 n_classes=config.n_classes,
-                with_datetime=config.with_datetime,
-                datetime_start=config.datetime_start,
-                datetime_end=config.datetime_end,
+                datetime_range=config.datetime_range,
                 with_date=config.with_date,
                 n_booleans=config.n_booleans,
                 nullable_ratio=config.nullable_ratio,
@@ -2548,7 +2548,7 @@ class PipelineFactory:
             config: Конфигурация генератора.
             steps: Список шагов для модификации.
         """
-        if not config.with_datetime:
+        if config.datetime_range is None:
             return
 
         # Datetime требует RegressionTarget — добавляем если ещё нет
@@ -2563,8 +2563,8 @@ class PipelineFactory:
 
         steps.append(
             Datetime(
-                start_date=config.datetime_start,
-                end_date=config.datetime_end,
+                start_date=config.datetime_range[0],
+                end_date=config.datetime_range[1],
                 seed=config.seed,
             )
         )

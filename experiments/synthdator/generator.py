@@ -238,6 +238,23 @@ def _registered(
         db.unregister(name)
 
 
+@contextmanager
+def _temp_files() -> Generator[list[str], None, None]:
+    """Контекстный менеджер для временных файлов с автоматической очисткой.
+
+    Yields:
+        Список для добавления путей временных файлов.
+        Все файлы из списка удаляются при выходе из контекста.
+    """
+    files: list[str] = []
+    try:
+        yield files
+    finally:
+        for f in files:
+            if os.path.exists(f):
+                os.remove(f)
+
+
 def _atomic_write(db: duckdb.DuckDBPyConnection, query: str, file_path: str) -> None:
     """Атомарная запись в parquet через временный файл.
 
@@ -309,19 +326,18 @@ def _chunked_target_writer(
     Yields:
         Функция write_chunk(chunk_idx, ids, values) для записи чанков.
     """
-    temp_files: list[str] = []
+    with _temp_files() as temp_files:
 
-    def write_chunk(chunk_idx: int, ids: np.ndarray, values: np.ndarray) -> None:
-        chunk_file = f"{meta.file_path}.chunk_{col_name}_{chunk_idx}.parquet"
-        temp_files.append(chunk_file)
+        def write_chunk(chunk_idx: int, ids: np.ndarray, values: np.ndarray) -> None:
+            chunk_file = f"{meta.file_path}.chunk_{col_name}_{chunk_idx}.parquet"
+            temp_files.append(chunk_file)
 
-        with _registered(db, "chunk_data", {"id": ids, "value": values}):
-            db.execute(
-                f"COPY (SELECT id, value FROM chunk_data) "
-                f"TO '{chunk_file}' (FORMAT PARQUET)"
-            )
+            with _registered(db, "chunk_data", {"id": ids, "value": values}):
+                db.execute(
+                    f"COPY (SELECT id, value FROM chunk_data) "
+                    f"TO '{chunk_file}' (FORMAT PARQUET)"
+                )
 
-    try:
         yield write_chunk
 
         # Объединяем чанки и джойним с main.
@@ -342,10 +358,6 @@ def _chunked_target_writer(
                 """,
                 meta.file_path,
             )
-    finally:
-        for f in temp_files:
-            if os.path.exists(f):
-                os.remove(f)
 
 
 @dataclass
@@ -623,9 +635,8 @@ class Numeric(Transformer):
             n_informative,
             num_chunks,
         )
-        temp_files: list[str] = []
 
-        try:
+        with _temp_files() as temp_files:
             for chunk_idx in range(num_chunks):
                 start_idx = chunk_idx * self.chunk_size
                 end_idx = min(start_idx + self.chunk_size, meta.row_count)
@@ -672,11 +683,6 @@ class Numeric(Transformer):
                 """,
                 meta.file_path,
             )
-        finally:
-            # Удаляем временные файлы в любом случае
-            for f in temp_files:
-                if os.path.exists(f):
-                    os.remove(f)
 
         # Обновляем meta
         for i, col_name in enumerate(feature_names):
@@ -2147,8 +2153,7 @@ class Nullable(Transformer):
         num_chunks = _n_chunks(meta.row_count, self.chunk_size)
 
         # Генерируем маски чанками и пишем во временные файлы
-        temp_mask_files: list[str] = []
-        try:
+        with _temp_files() as temp_mask_files:
             for chunk_idx in range(num_chunks):
                 offset = chunk_idx * self.chunk_size
                 limit = min(self.chunk_size, meta.row_count - offset)
@@ -2196,11 +2201,6 @@ class Nullable(Transformer):
                 """,
                 meta.file_path,
             )
-        finally:
-            # Cleanup временных файлов
-            for f in temp_mask_files:
-                if os.path.exists(f):
-                    os.remove(f)
 
         # Обновляем meta — добавляем тег nullable
         for col in target_cols:

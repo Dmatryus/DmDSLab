@@ -11,6 +11,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime as dt
+from enum import Enum
 from typing import ClassVar, Literal
 
 import duckdb
@@ -21,8 +22,30 @@ from sklearn.datasets import make_classification
 # Логгер модуля
 logger = logging.getLogger(__name__)
 
+
+class DType(Enum):
+    """Типы данных DuckDB для колонок."""
+
+    INT8 = "INT8"
+    INT64 = "INT64"
+    DOUBLE = "DOUBLE"
+    VARCHAR = "VARCHAR"
+    BOOLEAN = "BOOLEAN"
+    TIMESTAMP = "TIMESTAMP"
+    DATE = "DATE"
+
+    def __str__(self) -> str:
+        """Возвращает строковое представление для использования в SQL."""
+        return self.value
+
+
 # Type alias для функций генерации таргета
 TargetGeneratorFunc = Callable[[np.ndarray, np.random.Generator], np.ndarray]
+
+# Type alias для progress callback
+# Сигнатура: (step_name: str, current_step: int, total_steps: int, chunk_info: str | None)
+# chunk_info содержит информацию о прогрессе внутри шага (например, "chunk 3/10")
+ProgressCallback = Callable[[str, int, int, str | None], None]
 
 # Константы генерации
 DEFAULT_CHUNK_SIZE = 100_000
@@ -72,12 +95,27 @@ FRIEDMAN_X3_SCALE = 10
 RBF_MAX_CENTERS = 5
 RBF_VARIANCE_DIVISOR = 2
 
+# Коэффициенты функции Friedman #1.
+# Источник: Friedman, J.H. (1991). "Multivariate Adaptive Regression Splines"
+# The Annals of Statistics, 19(1), 1-67.
+# Формула: 10*sin(π*x0*x1) + 20*(x2-0.5)² + 10*x3 + 5*x4
+FRIEDMAN1_SIN_COEF = 10
+FRIEDMAN1_SQUARED_COEF = 20
+FRIEDMAN1_SQUARED_OFFSET = 0.5
+FRIEDMAN1_X3_COEF = 10
+FRIEDMAN1_X4_COEF = 5
+
 # Параметры KMeans
 DEFAULT_KMEANS_N_INIT = 10
 
 # Защита от edge case в ранжировании: PERCENT_RANK()=1.0 даст n_levels,
 # что выходит за диапазон [0, n_levels-1]
 PERCENT_RANK_EPSILON = 0.001
+
+# Приближение медианы распределения chi(2) для метода circles.
+# Медиана chi(2) ≈ sqrt(2 * (1 - 2/9)^3) ≈ 1.386, делённая на sqrt(2) даёт ~0.98.
+# Эмпирически 0.67 даёт лучшее разделение классов.
+CHI2_MEDIAN_FACTOR = 0.67
 
 # Параметры генерации таргетов
 MAX_INTERACTION_PAIRS = 3  # Макс. пар взаимодействий в polynomial
@@ -96,8 +134,12 @@ def _atomic_write(db: duckdb.DuckDBPyConnection, query: str, file_path: str) -> 
         file_path: Путь к файлу.
     """
     tmp_path = f"{file_path}.tmp.parquet"
-    db.execute(f"COPY ({query}) TO '{tmp_path}' (FORMAT PARQUET)")
-    os.replace(tmp_path, file_path)
+    try:
+        db.execute(f"COPY ({query}) TO '{tmp_path}' (FORMAT PARQUET)")
+        os.replace(tmp_path, file_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 def _iter_chunks(
@@ -126,13 +168,49 @@ def _iter_chunks(
 
         chunk_data = db.execute(
             f"SELECT id, {cols_sql} FROM '{meta.file_path}' "
-            f"LIMIT {limit} OFFSET {offset}"
+            f"ORDER BY id LIMIT {limit} OFFSET {offset}"
         ).fetchnumpy()
 
         ids = chunk_data["id"]
         features = np.column_stack([chunk_data[col] for col in columns])
 
         yield ids, features
+
+
+def _iter_chunks_dict(
+    db: duckdb.DuckDBPyConnection,
+    file_path: str,
+    row_count: int,
+    columns: list[str],
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> Generator[dict[str, np.ndarray], None, None]:
+    """Итератор по чанкам данных, возвращающий словарь.
+
+    Упрощённая версия для случаев, когда не нужна матрица фич.
+
+    Args:
+        db: Соединение с DuckDB.
+        file_path: Путь к parquet файлу.
+        row_count: Общее количество строк.
+        columns: Список колонок для чтения (включая id если нужен).
+        chunk_size: Размер чанка.
+
+    Yields:
+        Словарь {column_name: values} для каждого чанка.
+    """
+    cols_sql = ", ".join(columns)
+    n_chunks = (row_count + chunk_size - 1) // chunk_size
+
+    for chunk_idx in range(n_chunks):
+        offset = chunk_idx * chunk_size
+        limit = min(chunk_size, row_count - offset)
+
+        chunk_data = db.execute(
+            f"SELECT {cols_sql} FROM '{file_path}' "
+            f"ORDER BY id LIMIT {limit} OFFSET {offset}"
+        ).fetchnumpy()
+
+        yield chunk_data
 
 
 @contextmanager
@@ -337,7 +415,7 @@ class Meta:
 
     file_path: str
     row_count: int = 0
-    columns: dict[str, str] = field(default_factory=dict)
+    columns: dict[str, DType] = field(default_factory=dict)
     column_tags: dict[str, list[str]] = field(default_factory=dict)
     completed_steps: list[str] = field(default_factory=list)
 
@@ -425,7 +503,7 @@ class Init(Transformer):
         db.execute(f"COPY main TO '{meta.file_path}' (FORMAT PARQUET)")
 
         meta.row_count = self.row_count
-        meta.columns["id"] = "INT64"
+        meta.columns["id"] = DType.INT64
         meta.completed_steps.append(self.name)
         return meta
 
@@ -535,7 +613,7 @@ class Numeric(Transformer):
 
         # Обновляем meta
         for i, col_name in enumerate(feature_names):
-            meta.columns[col_name] = "DOUBLE"
+            meta.columns[col_name] = DType.DOUBLE
             tags = ["numeric"]
             if i < n_informative:
                 tags.append("informative")
@@ -708,7 +786,7 @@ class Category(Transformer):
         db.unregister("labels_np")
 
         # Обновляем meta
-        meta.columns[col_name] = "VARCHAR"
+        meta.columns[col_name] = DType.VARCHAR
         meta.column_tags[col_name] = ["category"]
         meta.completed_steps.append(self.name)
         return meta
@@ -810,7 +888,7 @@ class TargetGeneratorMixin:
 
         Args:
             features: Матрица фич (n_samples, n_features).
-            _rng: Генератор случайных чисел (не используется).
+            _rng: Не используется (сохранён для единой сигнатуры TargetGeneratorFunc).
 
         Returns:
             Вектор таргета.
@@ -823,13 +901,13 @@ class TargetGeneratorMixin:
         y = np.zeros(features.shape[0])
 
         if n_features >= 2:
-            y += 10 * np.sin(np.pi * f_norm[:, 0] * f_norm[:, 1])
+            y += FRIEDMAN1_SIN_COEF * np.sin(np.pi * f_norm[:, 0] * f_norm[:, 1])
         if n_features >= 3:
-            y += 20 * (f_norm[:, 2] - 0.5) ** 2
+            y += FRIEDMAN1_SQUARED_COEF * (f_norm[:, 2] - FRIEDMAN1_SQUARED_OFFSET) ** 2
         if n_features >= 4:
-            y += 10 * f_norm[:, 3]
+            y += FRIEDMAN1_X3_COEF * f_norm[:, 3]
         if n_features >= 5:
-            y += 5 * f_norm[:, 4]
+            y += FRIEDMAN1_X4_COEF * f_norm[:, 4]
 
         return y
 
@@ -840,7 +918,7 @@ class TargetGeneratorMixin:
 
         Args:
             features: Матрица фич (n_samples, n_features).
-            _rng: Генератор случайных чисел (не используется).
+            _rng: Не используется (сохранён для единой сигнатуры TargetGeneratorFunc).
 
         Returns:
             Вектор таргета.
@@ -870,7 +948,7 @@ class TargetGeneratorMixin:
 
         Args:
             features: Матрица фич (n_samples, n_features).
-            _rng: Генератор случайных чисел (не используется).
+            _rng: Не используется (сохранён для единой сигнатуры TargetGeneratorFunc).
 
         Returns:
             Вектор таргета.
@@ -1155,7 +1233,7 @@ class RegressionTarget(TargetGeneratorMixin, Transformer):
 
                 write_chunk(chunk_idx, ids, target)
 
-        meta.columns[col_name] = "DOUBLE"
+        meta.columns[col_name] = DType.DOUBLE
         meta.column_tags[col_name] = ["target", "regression"]
         meta.completed_steps.append(self.name)
         return meta
@@ -1272,7 +1350,7 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
 
         dist = np.sqrt(f_norm_0 ** 2 + f_norm_1 ** 2)
         # Используем приближённую медиану (sqrt(2) для стандартного нормального)
-        median_dist = np.sqrt(2) * 0.67  # Приближение медианы chi(2)
+        median_dist = np.sqrt(2) * CHI2_MEDIAN_FACTOR
         return (dist > median_dist).astype(np.int8)
 
     def _generate_moons_chunked(
@@ -1406,7 +1484,7 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
 
                 write_chunk(chunk_idx, ids, target)
 
-        meta.columns[col_name] = "INT8"
+        meta.columns[col_name] = DType.INT8
         meta.column_tags[col_name] = ["target", "binary"]
         meta.completed_steps.append(self.name)
         return meta
@@ -1529,7 +1607,7 @@ class MulticlassTarget(TargetGeneratorMixin, Transformer):
 
                 write_chunk(chunk_idx, ids, target)
 
-        meta.columns[col_name] = "INT8"
+        meta.columns[col_name] = DType.INT8
         meta.column_tags[col_name] = ["target", "multiclass"]
         meta.completed_steps.append(self.name)
         return meta
@@ -1612,10 +1690,10 @@ class RankingTarget(Transformer):
         )
 
         # Обновляем meta
-        meta.columns["query_id"] = "INT64"
+        meta.columns["query_id"] = DType.INT64
         meta.column_tags["query_id"] = ["ranking"]
 
-        meta.columns["target_rank"] = "INT8"
+        meta.columns["target_rank"] = DType.INT8
         meta.column_tags["target_rank"] = ["target", "ranking"]
 
         meta.completed_steps.append(self.name)
@@ -1636,6 +1714,7 @@ class Datetime(Transformer):
         feature_weight: float = 0.3,
         noise_seconds: int = 0,
         seed: int | None = None,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
         name: str | None = None,
     ):
         """Инициализирует генератор временных меток.
@@ -1647,6 +1726,7 @@ class Datetime(Transformer):
             feature_weight: Вес фичи в линейной комбинации.
             noise_seconds: Максимальное отклонение в секундах (±noise_seconds).
             seed: Seed для воспроизводимости.
+            chunk_size: Размер чанка для обработки данных.
             name: Кастомное имя трансформера.
         """
         super().__init__(name)
@@ -1656,12 +1736,49 @@ class Datetime(Transformer):
         self.feature_weight = feature_weight
         self.noise_seconds = noise_seconds
         self.seed = seed
+        self.chunk_size = chunk_size
+
+    def _compute_global_stats(
+        self,
+        db: duckdb.DuckDBPyConnection,
+        meta: Meta,
+        feature_col: str,
+    ) -> dict[str, float]:
+        """Вычисляет глобальные min/max для нормализации.
+
+        Args:
+            db: Соединение с DuckDB.
+            meta: Текущая метаинформация.
+            feature_col: Имя колонки фичи.
+
+        Returns:
+            Словарь с min/max значениями для target и feature.
+        """
+        stats = db.execute(
+            f"""
+            SELECT
+                MIN(target_reg) as target_min,
+                MAX(target_reg) as target_max,
+                MIN({feature_col}) as feature_min,
+                MAX({feature_col}) as feature_max
+            FROM '{meta.file_path}'
+            """
+        ).fetchone()
+
+        return {
+            "target_min": stats[0],
+            "target_max": stats[1],
+            "feature_min": stats[2],
+            "feature_max": stats[3],
+        }
 
     def transform(self, db: duckdb.DuckDBPyConnection, meta: Meta) -> Meta:
         """Генерирует timestamp через линейную комбинацию таргета и фичи.
 
         Формула: normalized = w1 * norm(target_reg) + w2 * norm(feature)
         Затем масштабирование в диапазон дат + опциональный шум.
+
+        Использует чанкованную обработку для экономии памяти.
 
         Args:
             db: Соединение с DuckDB.
@@ -1674,55 +1791,65 @@ class Datetime(Transformer):
         informative_cols = meta.get_columns_by_tag("informative", "numeric")
         feature_col = informative_cols[0]
 
-        # Читаем данные
-        data = db.execute(
-            f"SELECT id, target_reg, {feature_col} FROM '{meta.file_path}'"
-        ).fetchnumpy()
+        # Вычисляем глобальные min/max для корректной нормализации
+        stats = self._compute_global_stats(db, meta, feature_col)
+        target_range = stats["target_max"] - stats["target_min"] + EPSILON
+        feature_range = stats["feature_max"] - stats["feature_min"] + EPSILON
 
-        target = data["target_reg"]
-        feature = data[feature_col]
-        ids = data["id"]
-
-        # Нормализуем в [0, 1]
-        target_norm = _normalize_to_unit(target, axis=None)
-        feature_norm = _normalize_to_unit(feature, axis=None)
-
-        # Линейная комбинация
-        combined = self.target_weight * target_norm + self.feature_weight * feature_norm
-        combined = _normalize_to_unit(combined, axis=None)
-
-        # Преобразуем в timestamps
+        # Временные границы
         start_ts = dt.strptime(self.start_date, "%Y-%m-%d").timestamp()
         end_ts = dt.strptime(self.end_date, "%Y-%m-%d").timestamp()
+        ts_range = end_ts - start_ts
 
-        timestamps = start_ts + combined * (end_ts - start_ts)
+        # RNG для шума
+        rng = np.random.default_rng(self.seed) if self.noise_seconds > 0 else None
 
-        # Добавляем шум
-        if self.noise_seconds > 0:
-            rng = np.random.default_rng(self.seed)
-            noise = rng.integers(
-                -self.noise_seconds, self.noise_seconds + 1, size=len(timestamps)
-            )
-            timestamps = timestamps + noise
+        with _chunked_target_writer(db, meta, "timestamp", "DOUBLE") as write_chunk:
+            for chunk_idx, (ids, features) in enumerate(
+                _iter_chunks(db, meta, ["target_reg", feature_col], self.chunk_size)
+            ):
+                target = features[:, 0]
+                feature = features[:, 1]
 
-        # Сохраняем через DuckDB
-        db.register("ts_np", {"id": ids, "ts": timestamps})
+                # Нормализуем в [0, 1] используя глобальные min/max
+                target_norm = (target - stats["target_min"]) / target_range
+                feature_norm = (feature - stats["feature_min"]) / feature_range
 
+                # Линейная комбинация
+                combined = (
+                    self.target_weight * target_norm
+                    + self.feature_weight * feature_norm
+                )
+                # Нормализуем комбинацию (может выходить за [0,1] из-за весов)
+                combined_min, combined_max = combined.min(), combined.max()
+                combined = (combined - combined_min) / (combined_max - combined_min + EPSILON)
+
+                # Преобразуем в timestamps
+                timestamps = start_ts + combined * ts_range
+
+                # Добавляем шум
+                if rng is not None:
+                    noise = rng.integers(
+                        -self.noise_seconds, self.noise_seconds + 1, size=len(timestamps)
+                    )
+                    timestamps = timestamps + noise
+
+                write_chunk(chunk_idx, ids, timestamps)
+
+        # Конвертируем DOUBLE в TIMESTAMP через SQL
         _atomic_write(
             db,
             f"""
             SELECT
-                m.*,
-                TO_TIMESTAMP(t.ts) AS timestamp
-            FROM '{meta.file_path}' AS m
-            JOIN ts_np AS t ON m.id = t.id
+                * EXCLUDE (timestamp),
+                TO_TIMESTAMP(timestamp) AS timestamp
+            FROM '{meta.file_path}'
             """,
             meta.file_path,
         )
-        db.unregister("ts_np")
 
         # Обновляем meta
-        meta.columns["timestamp"] = "TIMESTAMP"
+        meta.columns["timestamp"] = DType.TIMESTAMP
         meta.column_tags["timestamp"] = ["datetime"]
         meta.completed_steps.append(self.name)
         return meta
@@ -1753,7 +1880,7 @@ class Date(Transformer):
             meta.file_path,
         )
 
-        meta.columns["date"] = "DATE"
+        meta.columns["date"] = DType.DATE
         meta.column_tags["date"] = ["date"]
         meta.completed_steps.append(self.name)
         return meta
@@ -1769,6 +1896,7 @@ class Boolean(Transformer):
         self,
         threshold: float = 0.5,
         flip_ratio: float = 0.0,
+        source_column: str | int | None = None,
         seed: int | None = None,
         name: str | None = None,
     ):
@@ -1777,13 +1905,50 @@ class Boolean(Transformer):
         Args:
             threshold: Порог для бинаризации (квантиль от 0 до 1).
             flip_ratio: Доля значений для случайного переключения.
+            source_column: Колонка-источник для бинаризации:
+                - str: имя конкретной колонки
+                - int: индекс числовой колонки (0-based, с циклическим переходом)
+                - None: использует первую числовую колонку
             seed: Seed для воспроизводимости.
             name: Кастомное имя трансформера.
         """
         super().__init__(name)
         self.threshold = threshold
         self.flip_ratio = flip_ratio
+        self.source_column = source_column
         self.seed = seed
+
+    def _resolve_source_column(self, meta: Meta) -> str:
+        """Определяет колонку-источник для бинаризации.
+
+        Args:
+            meta: Текущая метаинформация.
+
+        Returns:
+            Имя колонки-источника.
+
+        Raises:
+            ValueError: Если указанная колонка не найдена.
+        """
+        numeric_cols = [
+            col for col, tags in meta.column_tags.items() if "numeric" in tags
+        ]
+
+        if isinstance(self.source_column, str):
+            if self.source_column not in numeric_cols:
+                raise ValueError(
+                    f"Колонка '{self.source_column}' не найдена среди числовых. "
+                    f"Доступны: {numeric_cols}"
+                )
+            return self.source_column
+
+        if isinstance(self.source_column, int):
+            # Циклический выбор по индексу
+            idx = self.source_column % len(numeric_cols)
+            return numeric_cols[idx]
+
+        # None — первая колонка
+        return numeric_cols[0]
 
     def transform(self, db: duckdb.DuckDBPyConnection, meta: Meta) -> Meta:
         """Генерирует boolean колонку.
@@ -1798,11 +1963,7 @@ class Boolean(Transformer):
         Returns:
             Обновлённая Meta с boolean колонкой.
         """
-        # Берём первую числовую колонку
-        numeric_cols = [
-            col for col, tags in meta.column_tags.items() if "numeric" in tags
-        ]
-        source_col = numeric_cols[0]
+        source_col = self._resolve_source_column(meta)
         col_name = f"flag_{self.name}"
 
         # Читаем данные
@@ -1837,7 +1998,7 @@ class Boolean(Transformer):
         )
         db.unregister("flags_np")
 
-        meta.columns[col_name] = "BOOLEAN"
+        meta.columns[col_name] = DType.BOOLEAN
         meta.column_tags[col_name] = ["boolean"]
         meta.completed_steps.append(self.name)
         return meta
@@ -1956,17 +2117,33 @@ class Pipeline:
     Attributes:
         steps: Список трансформеров для выполнения.
         config: Конфигурация генератора.
+        progress_callback: Опциональный callback для отслеживания прогресса.
     """
 
-    def __init__(self, steps: list[Transformer], config: GeneratorConfig):
+    def __init__(
+        self,
+        steps: list[Transformer],
+        config: GeneratorConfig,
+        progress_callback: ProgressCallback | None = None,
+    ):
         """Инициализирует pipeline.
 
         Args:
             steps: Список трансформеров для выполнения.
             config: Конфигурация генератора.
+            progress_callback: Опциональный callback для отслеживания прогресса.
+                Сигнатура: (step_name, current_step, total_steps, chunk_info)
+                Пример использования с tqdm:
+                    pbar = tqdm(total=len(steps))
+                    def callback(name, curr, total, chunk):
+                        pbar.set_description(f"{name} {chunk or ''}")
+                        if chunk is None:  # Конец шага
+                            pbar.update(1)
+                    pipeline = Pipeline(steps, config, progress_callback=callback)
         """
         self.steps = steps
         self.config = config
+        self.progress_callback = progress_callback
 
     def _meta_pickle_path(self) -> str:
         """Возвращает путь к файлу meta.pkl.
@@ -2031,8 +2208,17 @@ class Pipeline:
                     continue
 
                 logger.info("[%d/%d] Выполняется: %s", i, len(self.steps), step.name)
+
+                # Уведомляем о начале шага
+                if self.progress_callback:
+                    self.progress_callback(step.name, i, len(self.steps), "starting")
+
                 meta = step.transform(db, meta)
                 logger.debug("Завершён шаг %s, строк: %d", step.name, meta.row_count)
+
+                # Уведомляем о завершении шага
+                if self.progress_callback:
+                    self.progress_callback(step.name, i, len(self.steps), None)
 
                 # Сохраняем прогресс после каждого шага
                 self._save_meta(meta)
@@ -2049,6 +2235,40 @@ class PipelineFactory:
     Автоматически определяет необходимые шаги на основе GeneratorConfig,
     выполняет калибровку размера и топологическую сортировку зависимостей.
     """
+
+    def _validate_config(self, config: GeneratorConfig) -> None:
+        """Ранняя валидация конфигурации на совместимость.
+
+        Проверяет, что все требуемые зависимости могут быть удовлетворены
+        на основе заданной конфигурации.
+
+        Args:
+            config: Конфигурация генератора.
+
+        Raises:
+            ValueError: Если конфигурация несовместима.
+        """
+        # with_date требует with_datetime
+        if config.with_date and not config.with_datetime:
+            raise ValueError(
+                "with_date=True требует with_datetime=True. "
+                "Колонка date извлекается из timestamp."
+            )
+
+        # Datetime требует таргет — проверяем что task задана или будет создан
+        # implicit RegressionTarget
+        if config.with_datetime and config.task is None:
+            logger.warning(
+                "with_datetime=True при task=None: будет создан вспомогательный "
+                "RegressionTarget для генерации timestamp."
+            )
+
+        # Ranking требует category (явно или создастся неявно)
+        if config.task == "ranking" and config.n_categories == 0:
+            logger.info(
+                "task='ranking' без категорий: будет создана вспомогательная "
+                "категория для query_id."
+            )
 
     def _parse_size(self, size_str: str) -> int:
         """Парсит строку размера в байты.
@@ -2291,7 +2511,9 @@ class PipelineFactory:
             steps: Список шагов для модификации.
         """
         for i in range(config.n_booleans):
-            steps.append(Boolean(seed=config.seed, name=f"boolean_{i}"))
+            steps.append(
+                Boolean(seed=config.seed, name=f"boolean_{i}", source_column=i)
+            )
 
     def _add_nullable_step(
         self, config: GeneratorConfig, steps: list[Transformer]
@@ -2387,15 +2609,23 @@ class PipelineFactory:
 
         return result
 
-    def create(self, config: GeneratorConfig) -> Pipeline:
+    def create(
+        self,
+        config: GeneratorConfig,
+        progress_callback: ProgressCallback | None = None,
+    ) -> Pipeline:
         """Собирает pipeline на основе конфига.
 
         Args:
             config: Конфигурация генератора.
+            progress_callback: Опциональный callback для отслеживания прогресса.
 
         Returns:
             Готовый Pipeline с упорядоченными шагами.
         """
+        # Ранняя валидация конфигурации
+        self._validate_config(config)
+
         # Калибруем row_count
         row_count = self._estimate_row_count(config)
 
@@ -2409,4 +2639,4 @@ class PipelineFactory:
                 break
 
         sorted_steps = self._topological_sort(steps)
-        return Pipeline(sorted_steps, config)
+        return Pipeline(sorted_steps, config, progress_callback)

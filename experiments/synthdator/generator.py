@@ -1,19 +1,28 @@
 """Генератор синтетических данных для ML."""
 
+from __future__ import annotations
+
+import logging
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime as dt
-from typing import ClassVar, Literal, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from typing import Type
-
-import os
+from typing import ClassVar, Literal
 
 import duckdb
 import numpy as np
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.datasets import make_classification
+
+# Логгер модуля
+logger = logging.getLogger(__name__)
+
+# Константы генерации
+DEFAULT_CHUNK_SIZE = 100_000
+DEFAULT_KMEANS_SAMPLES = 100_000
+DEFAULT_CALIBRATION_ROWS = 1_000
+DEFAULT_STEP_BINS = 5
+MIN_ROW_COUNT = 100
 
 
 def _atomic_write(db: duckdb.DuckDBPyConnection, query: str, file_path: str) -> None:
@@ -117,6 +126,25 @@ class Meta:
     column_tags: dict[str, list[str]] = field(default_factory=dict)
     completed_steps: list[str] = field(default_factory=list)
 
+    def get_columns_by_tag(
+        self, prefer_tag: str, fallback_tag: str | None = None
+    ) -> list[str]:
+        """Возвращает колонки по тегу с опциональным fallback.
+
+        Args:
+            prefer_tag: Предпочитаемый тег.
+            fallback_tag: Fallback тег, если prefer_tag не найден.
+
+        Returns:
+            Список имён колонок.
+        """
+        cols = [col for col, tags in self.column_tags.items() if prefer_tag in tags]
+        if not cols and fallback_tag:
+            cols = [
+                col for col, tags in self.column_tags.items() if fallback_tag in tags
+            ]
+        return cols
+
 
 class Transformer(ABC):
     """Базовый класс трансформера pipeline."""
@@ -198,7 +226,7 @@ class Numeric(Transformer):
         n_features: int = 20,
         informative_ratio: float = 0.5,
         seed: int | None = None,
-        chunk_size: int = 100_000,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
         name: str | None = None,
     ):
         """Инициализирует генератор числовых фич.
@@ -227,11 +255,6 @@ class Numeric(Transformer):
             Обновлённая Meta с информацией о сгенерированных фичах.
         """
         feature_names = [f"numeric_{i}" for i in range(self.n_features)]
-        # DuckDB при регистрации numpy массива создаёт колонки column0, column1, ...
-        # Переименовываем их в осмысленные имена (column0 — это id)
-        col_defs = ", ".join(
-            [f"column{i+1} AS {name}" for i, name in enumerate(feature_names)]
-        )
         n_informative = int(self.n_features * self.informative_ratio)
 
         n_chunks = (meta.row_count + self.chunk_size - 1) // self.chunk_size
@@ -312,7 +335,7 @@ class Category(Transformer):
         noise_ratio: float = 0.0,
         seed: int | None = None,
         name: str | None = None,
-        max_kmeans_samples: int = 100_000,
+        max_kmeans_samples: int = DEFAULT_KMEANS_SAMPLES,
     ):
         """Инициализирует генератор категорий.
 
@@ -372,7 +395,7 @@ class Category(Transformer):
         kmeans.fit(sample_array)
 
         # Predict чанками для экономии памяти
-        chunk_size = 100_000
+        chunk_size = DEFAULT_CHUNK_SIZE
         labels = np.empty(meta.row_count, dtype=np.int32)
 
         for offset in range(0, meta.row_count, chunk_size):
@@ -468,52 +491,8 @@ class Category(Transformer):
         return meta
 
 
-class RegressionTarget(Transformer):
-    """Генерирует целевую переменную для регрессии на основе существующих фич."""
-
-    default_name: ClassVar[str] = "regression_target"
-    requires: ClassVar[list[type[Transformer]]] = [Numeric]
-
-    def __init__(
-        self,
-        method: Literal[
-            "linear",
-            "polynomial",
-            "nonlinear",
-            "friedman1",
-            "friedman2",
-            "friedman3",
-            "exponential",
-            "logarithmic",
-            "step",
-            "radial",
-        ] = "linear",
-        noise: float = 0.1,
-        seed: int | None = None,
-        name: str | None = None,
-    ):
-        """Инициализирует генератор таргета регрессии.
-
-        Args:
-            method: Метод генерации зависимости:
-                - "linear": y = X @ coef
-                - "polynomial": квадраты + взаимодействия пар фич
-                - "nonlinear": sin/cos/exp комбинации
-                - "friedman1": 10*sin(π*x0*x1) + 20*(x2-0.5)² + 10*x3 + 5*x4
-                - "friedman2": sqrt(x0² + (x1*x2 - 1/(x1*x3))²)
-                - "friedman3": atan((x1*x2 - 1/(x1*x3)) / x0)
-                - "exponential": exp(X @ coef) с масштабированием
-                - "logarithmic": log(|X| + 1) @ coef
-                - "step": кусочно-постоянная функция
-                - "radial": зависимость от расстояния до случайных центров
-            noise: Стандартное отклонение гауссова шума (относительно std(y)).
-            seed: Seed для воспроизводимости.
-            name: Кастомное имя трансформера.
-        """
-        super().__init__(name)
-        self.method = method
-        self.noise = noise
-        self.seed = seed
+class TargetGeneratorMixin:
+    """Миксин с методами генерации таргетов для регрессии и классификации."""
 
     def _generate_linear(
         self, features: np.ndarray, rng: np.random.Generator
@@ -751,7 +730,7 @@ class RegressionTarget(Transformer):
             Вектор таргета.
         """
         n_features = features.shape[1]
-        n_steps = 5
+        n_steps = DEFAULT_STEP_BINS
 
         # Берём первую фичу и делим на ступени
         x = features[:, 0]
@@ -800,6 +779,54 @@ class RegressionTarget(Transformer):
 
         return y
 
+
+class RegressionTarget(TargetGeneratorMixin, Transformer):
+    """Генерирует целевую переменную для регрессии на основе существующих фич."""
+
+    default_name: ClassVar[str] = "regression_target"
+    requires: ClassVar[list[type[Transformer]]] = [Numeric]
+
+    def __init__(
+        self,
+        method: Literal[
+            "linear",
+            "polynomial",
+            "nonlinear",
+            "friedman1",
+            "friedman2",
+            "friedman3",
+            "exponential",
+            "logarithmic",
+            "step",
+            "radial",
+        ] = "linear",
+        noise: float = 0.1,
+        seed: int | None = None,
+        name: str | None = None,
+    ):
+        """Инициализирует генератор таргета регрессии.
+
+        Args:
+            method: Метод генерации зависимости:
+                - "linear": y = X @ coef
+                - "polynomial": квадраты + взаимодействия пар фич
+                - "nonlinear": sin/cos/exp комбинации
+                - "friedman1": 10*sin(π*x0*x1) + 20*(x2-0.5)² + 10*x3 + 5*x4
+                - "friedman2": sqrt(x0² + (x1*x2 - 1/(x1*x3))²)
+                - "friedman3": atan((x1*x2 - 1/(x1*x3)) / x0)
+                - "exponential": exp(X @ coef) с масштабированием
+                - "logarithmic": log(|X| + 1) @ coef
+                - "step": кусочно-постоянная функция
+                - "radial": зависимость от расстояния до случайных центров
+            noise: Стандартное отклонение гауссова шума (относительно std(y)).
+            seed: Seed для воспроизводимости.
+            name: Кастомное имя трансформера.
+        """
+        super().__init__(name)
+        self.method = method
+        self.noise = noise
+        self.seed = seed
+
     def transform(self, db: duckdb.DuckDBPyConnection, meta: Meta) -> Meta:
         """Генерирует таргет регрессии на основе информативных фич.
 
@@ -810,13 +837,7 @@ class RegressionTarget(Transformer):
         Returns:
             Обновлённая Meta с информацией о таргете.
         """
-        informative_cols = [
-            col for col, tags in meta.column_tags.items() if "informative" in tags
-        ]
-        if not informative_cols:
-            informative_cols = [
-                col for col, tags in meta.column_tags.items() if "numeric" in tags
-            ]
+        informative_cols = meta.get_columns_by_tag("informative", "numeric")
 
         col_name = "target_reg"
 
@@ -874,7 +895,7 @@ class RegressionTarget(Transformer):
         return meta
 
 
-class BinaryTarget(Transformer):
+class BinaryTarget(TargetGeneratorMixin, Transformer):
     """Генерирует целевую переменную для бинарной классификации."""
 
     default_name: ClassVar[str] = "binary_target"
@@ -923,18 +944,6 @@ class BinaryTarget(Transformer):
         self.threshold = threshold
         self.flip_ratio = flip_ratio
         self.seed = seed
-
-    # Наследуем регрессионные методы из RegressionTarget
-    _generate_linear = RegressionTarget._generate_linear
-    _generate_polynomial = RegressionTarget._generate_polynomial
-    _generate_nonlinear = RegressionTarget._generate_nonlinear
-    _generate_friedman1 = RegressionTarget._generate_friedman1
-    _generate_friedman2 = RegressionTarget._generate_friedman2
-    _generate_friedman3 = RegressionTarget._generate_friedman3
-    _generate_exponential = RegressionTarget._generate_exponential
-    _generate_logarithmic = RegressionTarget._generate_logarithmic
-    _generate_step = RegressionTarget._generate_step
-    _generate_radial = RegressionTarget._generate_radial
 
     def _generate_xor(
         self, features: np.ndarray, rng: np.random.Generator
@@ -1028,13 +1037,7 @@ class BinaryTarget(Transformer):
         Returns:
             Обновлённая Meta с информацией о таргете.
         """
-        informative_cols = [
-            col for col, tags in meta.column_tags.items() if "informative" in tags
-        ]
-        if not informative_cols:
-            informative_cols = [
-                col for col, tags in meta.column_tags.items() if "numeric" in tags
-            ]
+        informative_cols = meta.get_columns_by_tag("informative", "numeric")
 
         col_name = "target_bin"
 
@@ -1108,7 +1111,7 @@ class BinaryTarget(Transformer):
         return meta
 
 
-class MulticlassTarget(Transformer):
+class MulticlassTarget(TargetGeneratorMixin, Transformer):
     """Генерирует целевую переменную для многоклассовой классификации."""
 
     default_name: ClassVar[str] = "multiclass_target"
@@ -1148,18 +1151,6 @@ class MulticlassTarget(Transformer):
         self.method = method
         self.seed = seed
 
-    # Наследуем все регрессионные методы из RegressionTarget
-    _generate_linear = RegressionTarget._generate_linear
-    _generate_polynomial = RegressionTarget._generate_polynomial
-    _generate_nonlinear = RegressionTarget._generate_nonlinear
-    _generate_friedman1 = RegressionTarget._generate_friedman1
-    _generate_friedman2 = RegressionTarget._generate_friedman2
-    _generate_friedman3 = RegressionTarget._generate_friedman3
-    _generate_exponential = RegressionTarget._generate_exponential
-    _generate_logarithmic = RegressionTarget._generate_logarithmic
-    _generate_step = RegressionTarget._generate_step
-    _generate_radial = RegressionTarget._generate_radial
-
     def transform(self, db: duckdb.DuckDBPyConnection, meta: Meta) -> Meta:
         """Генерирует многоклассовый таргет через квантильный биннинг.
 
@@ -1170,13 +1161,7 @@ class MulticlassTarget(Transformer):
         Returns:
             Обновлённая Meta с информацией о таргете.
         """
-        informative_cols = [
-            col for col, tags in meta.column_tags.items() if "informative" in tags
-        ]
-        if not informative_cols:
-            informative_cols = [
-                col for col, tags in meta.column_tags.items() if "numeric" in tags
-            ]
+        informative_cols = meta.get_columns_by_tag("informative", "numeric")
 
         col_name = "target_multi"
 
@@ -1366,13 +1351,7 @@ class Datetime(Transformer):
             Обновлённая Meta с колонкой timestamp.
         """
         # Берём первую информативную фичу
-        informative_cols = [
-            col for col, tags in meta.column_tags.items() if "informative" in tags
-        ]
-        if not informative_cols:
-            informative_cols = [
-                col for col, tags in meta.column_tags.items() if "numeric" in tags
-            ]
+        informative_cols = meta.get_columns_by_tag("informative", "numeric")
         feature_col = informative_cols[0]
 
         # Читаем данные
@@ -1671,13 +1650,17 @@ class Pipeline:
         Returns:
             Итоговая Meta после выполнения всех шагов.
         """
+        logger.info("Запуск pipeline с %d шагами", len(self.steps))
         db = duckdb.connect()
         try:
             meta = Meta(file_path=f"{self.config.output_path}/main.parquet")
 
-            for step in self.steps:
+            for i, step in enumerate(self.steps, 1):
+                logger.info("[%d/%d] Выполняется: %s", i, len(self.steps), step.name)
                 meta = step.transform(db, meta)
+                logger.debug("Завершён шаг %s, строк: %d", step.name, meta.row_count)
 
+            logger.info("Pipeline завершён успешно, строк: %d", meta.row_count)
             return meta
         finally:
             db.close()
@@ -1727,9 +1710,10 @@ class PipelineFactory:
         import tempfile
 
         target_bytes = self._parse_size(config.target_size)
+        logger.info("Калибровка: целевой размер %s (%d байт)", config.target_size, target_bytes)
 
         # Калибровочная выборка
-        calibration_rows = 1000
+        calibration_rows = DEFAULT_CALIBRATION_ROWS
 
         with tempfile.TemporaryDirectory() as tmpdir:
             calibration_path = f"{tmpdir}/calibration.parquet"
@@ -1783,8 +1767,15 @@ class PipelineFactory:
 
             # Экстраполируем
             estimated_rows = int(target_bytes / bytes_per_row)
+            result_rows = max(MIN_ROW_COUNT, estimated_rows)
 
-            return max(1, estimated_rows)
+            logger.info(
+                "Калибровка завершена: %.2f байт/строка, оценка %d строк",
+                bytes_per_row,
+                result_rows,
+            )
+
+            return result_rows
 
     def _build_steps(self, config: GeneratorConfig) -> list[Transformer]:
         """Определяет какие шаги нужны на основе конфига.

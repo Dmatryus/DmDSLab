@@ -3,6 +3,8 @@
 import os
 import tempfile
 
+import duckdb
+
 from generator import GeneratorConfig, PipelineFactory
 
 
@@ -36,11 +38,9 @@ def demo_regression():
         print(f"File size: {os.path.getsize(meta.file_path) / 1024:.1f} KB")
 
         # Проверяем данные
-        import duckdb
-
-        db = duckdb.connect()
-        sample = db.execute(f"SELECT * FROM '{meta.file_path}' LIMIT 5").fetchdf()
-        print(f"\nSample:\n{sample}")
+        with duckdb.connect() as db:
+            sample = db.execute(f"SELECT * FROM '{meta.file_path}' LIMIT 5").fetchdf()
+            print(f"\nSample:\n{sample}")
 
 
 def demo_binary_classification():
@@ -73,13 +73,11 @@ def demo_binary_classification():
         print(f"File size: {os.path.getsize(meta.file_path) / 1024:.1f} KB")
 
         # Проверяем распределение классов
-        import duckdb
-
-        db = duckdb.connect()
-        dist = db.execute(
-            f"SELECT target_bin, COUNT(*) as cnt FROM '{meta.file_path}' GROUP BY 1"
-        ).fetchdf()
-        print(f"\nClass distribution:\n{dist}")
+        with duckdb.connect() as db:
+            dist = db.execute(
+                f"SELECT target_bin, COUNT(*) as cnt FROM '{meta.file_path}' GROUP BY 1"
+            ).fetchdf()
+            print(f"\nClass distribution:\n{dist}")
 
 
 def demo_multiclass():
@@ -110,13 +108,11 @@ def demo_multiclass():
         print(f"Columns: {list(meta.columns.keys())}")
 
         # Проверяем распределение классов
-        import duckdb
-
-        db = duckdb.connect()
-        dist = db.execute(
-            f"SELECT target_multi, COUNT(*) as cnt FROM '{meta.file_path}' GROUP BY 1 ORDER BY 1"
-        ).fetchdf()
-        print(f"\nClass distribution:\n{dist}")
+        with duckdb.connect() as db:
+            dist = db.execute(
+                f"SELECT target_multi, COUNT(*) as cnt FROM '{meta.file_path}' GROUP BY 1 ORDER BY 1"
+            ).fetchdf()
+            print(f"\nClass distribution:\n{dist}")
 
 
 def demo_ranking():
@@ -148,13 +144,11 @@ def demo_ranking():
         print(f"Columns: {list(meta.columns.keys())}")
 
         # Проверяем распределение рангов
-        import duckdb
-
-        db = duckdb.connect()
-        dist = db.execute(
-            f"SELECT target_rank, COUNT(*) as cnt FROM '{meta.file_path}' GROUP BY 1 ORDER BY 1"
-        ).fetchdf()
-        print(f"\nRank distribution:\n{dist}")
+        with duckdb.connect() as db:
+            dist = db.execute(
+                f"SELECT target_rank, COUNT(*) as cnt FROM '{meta.file_path}' GROUP BY 1 ORDER BY 1"
+            ).fetchdf()
+            print(f"\nRank distribution:\n{dist}")
 
 
 def demo_full_featured():
@@ -194,20 +188,18 @@ def demo_full_featured():
         print(f"File size: {os.path.getsize(meta.file_path) / 1024:.1f} KB")
 
         # Проверяем данные
-        import duckdb
+        with duckdb.connect() as db:
+            sample = db.execute(f"SELECT * FROM '{meta.file_path}' LIMIT 3").fetchdf()
+            print(f"\nSample:\n{sample.to_string()}")
 
-        db = duckdb.connect()
-        sample = db.execute(f"SELECT * FROM '{meta.file_path}' LIMIT 3").fetchdf()
-        print(f"\nSample:\n{sample.to_string()}")
-
-        # Проверяем NULL
-        null_counts = db.execute(f"""
-            SELECT
-                SUM(CASE WHEN numeric_0 IS NULL THEN 1 ELSE 0 END) as numeric_0_nulls,
-                SUM(CASE WHEN numeric_1 IS NULL THEN 1 ELSE 0 END) as numeric_1_nulls
-            FROM '{meta.file_path}'
-        """).fetchdf()
-        print(f"\nNULL counts:\n{null_counts}")
+            # Проверяем NULL
+            null_counts = db.execute(f"""
+                SELECT
+                    SUM(CASE WHEN numeric_0 IS NULL THEN 1 ELSE 0 END) as numeric_0_nulls,
+                    SUM(CASE WHEN numeric_1 IS NULL THEN 1 ELSE 0 END) as numeric_1_nulls
+                FROM '{meta.file_path}'
+            """).fetchdf()
+            print(f"\nNULL counts:\n{null_counts}")
 
 
 if __name__ == "__main__":

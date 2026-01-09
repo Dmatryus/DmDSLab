@@ -49,6 +49,7 @@ ProgressCallback = Callable[[str, int, int, str | None], None]
 
 # Константы генерации
 DEFAULT_CHUNK_SIZE = 100_000
+MAX_UNION_CHUNKS = 500  # Максимум чанков в одном UNION ALL (лимит DuckDB ~1000)
 DEFAULT_KMEANS_SAMPLES = 100_000
 DEFAULT_CALIBRATION_ROWS = 5_000  # Больше строк = лучше оценка компрессии parquet
 DEFAULT_STEP_BINS = 5
@@ -273,6 +274,56 @@ def _atomic_write(db: duckdb.DuckDBPyConnection, query: str, file_path: str) -> 
             os.remove(tmp_path)
 
 
+def _merge_chunks_batched(
+    db: duckdb.DuckDBPyConnection,
+    chunk_files: list[str],
+    output_path: str,
+    batch_size: int = MAX_UNION_CHUNKS,
+) -> None:
+    """Объединяет чанки партиями, обходя лимит DuckDB на UNION ALL.
+
+    Если чанков больше batch_size, объединяет их рекурсивно:
+    сначала в промежуточные файлы, затем финальное объединение.
+
+    Args:
+        db: Соединение с DuckDB.
+        chunk_files: Список путей к parquet-чанкам.
+        output_path: Путь для результирующего файла.
+        batch_size: Максимум чанков в одном UNION ALL.
+    """
+    if len(chunk_files) <= batch_size:
+        # Простой случай — всё влезает в один UNION ALL
+        chunks_union = " UNION ALL ".join(
+            [f"SELECT * FROM '{f}'" for f in chunk_files]
+        )
+        db.execute(f"COPY ({chunks_union}) TO '{output_path}' (FORMAT PARQUET)")
+        return
+
+    # Рекурсивное объединение партиями
+    intermediate_files: list[str] = []
+    try:
+        for batch_idx in range(_n_chunks(len(chunk_files), batch_size)):
+            start = batch_idx * batch_size
+            end = min(start + batch_size, len(chunk_files))
+            batch = chunk_files[start:end]
+
+            intermediate_path = f"{output_path}.intermediate_{batch_idx}.parquet"
+            intermediate_files.append(intermediate_path)
+
+            chunks_union = " UNION ALL ".join(
+                [f"SELECT * FROM '{f}'" for f in batch]
+            )
+            db.execute(f"COPY ({chunks_union}) TO '{intermediate_path}' (FORMAT PARQUET)")
+
+        # Рекурсивно объединяем промежуточные файлы
+        _merge_chunks_batched(db, intermediate_files, output_path, batch_size)
+    finally:
+        # Удаляем промежуточные файлы
+        for f in intermediate_files:
+            if os.path.exists(f):
+                os.remove(f)
+
+
 def _iter_chunks(
     db: duckdb.DuckDBPyConnection,
     meta: "Meta",
@@ -296,9 +347,11 @@ def _iter_chunks(
         offset = chunk_idx * chunk_size
         limit = min(chunk_size, meta.row_count - offset)
 
+        # Не используем ORDER BY — parquet уже упорядочен по id,
+        # а сортировка требует загрузки всего файла в память
         chunk_data = db.execute(
             f"SELECT id, {cols_sql} FROM '{meta.file_path}' "
-            f"ORDER BY id LIMIT {limit} OFFSET {offset}"
+            f"LIMIT {limit} OFFSET {offset}"
         ).fetchnumpy()
 
         ids = chunk_data["id"]
@@ -342,23 +395,23 @@ def _chunked_target_writer(
         yield write_chunk
 
         # Объединяем чанки и джойним с main.
-        # DuckDB выполняет это стримингом — данные не загружаются в память целиком:
-        # - UNION ALL читает parquet файлы последовательно
-        # - JOIN использует hash table только для чанков (id + value)
-        # - COPY TO пишет результат потоково
+        # Используем батчевое объединение для обхода лимита DuckDB на UNION ALL.
         if temp_files:
-            chunks_union = " UNION ALL ".join(
-                [f"SELECT * FROM '{f}'" for f in temp_files]
-            )
-            _atomic_write(
-                db,
-                f"""
-                    SELECT m.*, CAST(t.value AS {col_type}) AS {col_name}
-                    FROM '{meta.file_path}' AS m
-                    JOIN ({chunks_union}) AS t ON m.id = t.id
-                """,
-                meta.file_path,
-            )
+            merged_chunks_path = f"{meta.file_path}.merged_{col_name}.parquet"
+            try:
+                _merge_chunks_batched(db, temp_files, merged_chunks_path)
+                _atomic_write(
+                    db,
+                    f"""
+                        SELECT m.*, CAST(t.value AS {col_type}) AS {col_name}
+                        FROM '{meta.file_path}' AS m
+                        JOIN '{merged_chunks_path}' AS t ON m.id = t.id
+                    """,
+                    meta.file_path,
+                )
+            finally:
+                if os.path.exists(merged_chunks_path):
+                    os.remove(merged_chunks_path)
 
 
 @dataclass
@@ -671,19 +724,24 @@ class Numeric(Transformer):
                     """
                     )
 
-            # Объединяем чанки и джойним с main
-            chunks_union = " UNION ALL ".join(
-                [f"SELECT * FROM '{f}'" for f in temp_files]
-            )
-            _atomic_write(
-                db,
-                f"""
-                    SELECT m.*, f.* EXCLUDE (id)
-                    FROM '{meta.file_path}' AS m
-                    JOIN ({chunks_union}) AS f USING (id)
-                """,
-                meta.file_path,
-            )
+            # Объединяем чанки во временный файл
+            merged_chunks_path = f"{meta.file_path}.merged_features.parquet"
+            try:
+                _merge_chunks_batched(db, temp_files, merged_chunks_path)
+
+                # Джойним с main
+                _atomic_write(
+                    db,
+                    f"""
+                        SELECT m.*, f.* EXCLUDE (id)
+                        FROM '{meta.file_path}' AS m
+                        JOIN '{merged_chunks_path}' AS f USING (id)
+                    """,
+                    meta.file_path,
+                )
+            finally:
+                if os.path.exists(merged_chunks_path):
+                    os.remove(merged_chunks_path)
 
         # Обновляем meta
         for i, col_name in enumerate(feature_names):
@@ -812,9 +870,9 @@ class Category(Transformer):
         Returns:
             Обновлённая Meta с информацией о категориальной колонке.
         """
-        numeric_cols = [
-            col for col, tags in meta.column_tags.items() if "numeric" in tags
-        ]
+        # Используем informative колонки для лучшего качества кластеризации,
+        # fallback на все numeric если informative нет
+        numeric_cols = meta.get_columns_by_tag("informative", fallback_tag="numeric")
         col_name = f"cat_{self.name}"
 
         if self.method == "kmeans":
@@ -2298,6 +2356,9 @@ class Pipeline:
             meta = Meta(file_path=f"{self.config.output_path}/main.parquet")
 
         db = duckdb.connect()
+        # Ограничиваем память DuckDB для стабильной работы с большими данными
+        db.execute("SET memory_limit='4GB'")
+        db.execute("SET threads=4")
         try:
             for i, step in enumerate(self.steps, 1):
                 # Пропускаем уже выполненные шаги

@@ -1,4 +1,4 @@
-"""Demo script для генерации большого датасета (100GB)."""
+"""Demo script для генерации большого датасета (10GB)."""
 
 import logging
 import os
@@ -16,17 +16,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def demo_100gb():
-    """Генерация датасета 100GB."""
+def demo_10gb():
+    """Генерация датасета 10GB."""
     logger.info("=" * 60)
-    logger.info("Demo: 100GB dataset generation")
+    logger.info("Demo: 10GB dataset generation")
     logger.info("=" * 60)
 
-    output_dir = "./output_100gb"
+    output_dir = "./output_10gb"
     os.makedirs(output_dir, exist_ok=True)
 
     config = GeneratorConfig(
-        target_size="100GB",
+        target_size="10GB",
         output_path=output_dir,
         seed=42,
         n_numeric=50,
@@ -83,4 +83,4 @@ def demo_100gb():
 
 
 if __name__ == "__main__":
-    demo_100gb()
+    demo_10gb()

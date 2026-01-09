@@ -2643,44 +2643,69 @@ class PipelineFactory:
 
         return steps
 
-    def _topological_sort(self, steps: list[Transformer]) -> list[Transformer]:
-        """Топологическая сортировка шагов по зависимостям.
+    def _build_in_degree(
+        self,
+        steps: list[Transformer],
+        available_classes: set[type[Transformer]],
+    ) -> dict[Transformer, int]:
+        """Подсчитывает количество зависимостей для каждого шага.
 
-        Поддерживает множественные экземпляры одного класса (например, несколько Category).
-        Зависимость считается выполненной, когда выполнен хотя бы один экземпляр
-        требуемого класса.
+        Args:
+            steps: Список трансформеров.
+            available_classes: Множество классов, присутствующих в pipeline.
+
+        Returns:
+            Словарь {шаг: количество невыполненных зависимостей}.
+        """
+        in_degree: dict[Transformer, int] = {}
+        for step in steps:
+            count = sum(1 for req in type(step).requires if req in available_classes)
+            in_degree[step] = count
+        return in_degree
+
+    def _build_dependents(
+        self,
+        steps: list[Transformer],
+    ) -> dict[type[Transformer], list[Transformer]]:
+        """Строит обратный граф зависимостей.
 
         Args:
             steps: Список трансформеров.
 
         Returns:
-            Отсортированный список трансформеров.
+            Словарь {класс: список шагов, зависящих от этого класса}.
         """
-        # Строим множество доступных классов
-        available_classes: set[type[Transformer]] = {type(step) for step in steps}
-
-        # in_degree[step] = количество невыполненных зависимостей
-        in_degree: dict[Transformer, int] = {}
-
-        for step in steps:
-            count = 0
-            for req_class in type(step).requires:
-                if req_class in available_classes:
-                    count += 1
-            in_degree[step] = count
-
-        # dependents[class] = список шагов, зависящих от этого класса
         dependents: dict[type[Transformer], list[Transformer]] = {}
         for step in steps:
             for req_class in type(step).requires:
                 if req_class not in dependents:
                     dependents[req_class] = []
                 dependents[req_class].append(step)
+        return dependents
 
-        # Отслеживаем какие классы уже выполнены
+    def _kahn_sort(
+        self,
+        steps: list[Transformer],
+        in_degree: dict[Transformer, int],
+        dependents: dict[type[Transformer], list[Transformer]],
+    ) -> list[Transformer]:
+        """Выполняет алгоритм Кана для топологической сортировки.
+
+        Особенность: зависимость считается выполненной после завершения
+        первого экземпляра требуемого класса.
+
+        Args:
+            steps: Список трансформеров.
+            in_degree: Количество зависимостей для каждого шага.
+            dependents: Обратный граф зависимостей.
+
+        Returns:
+            Отсортированный список трансформеров.
+
+        Raises:
+            ValueError: Если обнаружен цикл в зависимостях.
+        """
         executed_classes: set[type[Transformer]] = set()
-
-        # Алгоритм Кана
         result: list[Transformer] = []
         queue: list[Transformer] = [s for s in steps if in_degree[s] == 0]
 
@@ -2694,16 +2719,33 @@ class PipelineFactory:
             if current_class not in executed_classes:
                 executed_classes.add(current_class)
 
-                if current_class in dependents:
-                    for dependent in dependents[current_class]:
-                        in_degree[dependent] -= 1
-                        if in_degree[dependent] == 0:
-                            queue.append(dependent)
+                for dependent in dependents.get(current_class, []):
+                    in_degree[dependent] -= 1
+                    if in_degree[dependent] == 0:
+                        queue.append(dependent)
 
         if len(result) != len(steps):
             raise ValueError("Обнаружен цикл в зависимостях трансформеров")
 
         return result
+
+    def _topological_sort(self, steps: list[Transformer]) -> list[Transformer]:
+        """Топологическая сортировка шагов по зависимостям.
+
+        Поддерживает множественные экземпляры одного класса (например, несколько Category).
+        Зависимость считается выполненной, когда выполнен хотя бы один экземпляр
+        требуемого класса.
+
+        Args:
+            steps: Список трансформеров.
+
+        Returns:
+            Отсортированный список трансформеров.
+        """
+        available_classes: set[type[Transformer]] = {type(step) for step in steps}
+        in_degree = self._build_in_degree(steps, available_classes)
+        dependents = self._build_dependents(steps)
+        return self._kahn_sort(steps, in_degree, dependents)
 
     def create(
         self,

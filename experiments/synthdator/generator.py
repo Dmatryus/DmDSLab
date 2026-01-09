@@ -50,7 +50,7 @@ ProgressCallback = Callable[[str, int, int, str | None], None]
 # Константы генерации
 DEFAULT_CHUNK_SIZE = 100_000
 DEFAULT_KMEANS_SAMPLES = 100_000
-DEFAULT_CALIBRATION_ROWS = 1_000
+DEFAULT_CALIBRATION_ROWS = 5_000  # Больше строк = лучше оценка компрессии parquet
 DEFAULT_STEP_BINS = 5
 MIN_ROW_COUNT = 100
 

@@ -153,6 +153,7 @@ class Meta:
 
     file_path: str
     row_count: int = 0
+    file_size_bytes: int = 0  # Размер parquet файла в байтах
     columns: dict[str, DType] = field(default_factory=dict)
     column_tags: dict[str, list[str]] = field(default_factory=dict)
     completed_steps: list[str] = field(default_factory=list)
@@ -204,6 +205,120 @@ class Meta:
         if col not in self.column_stats:
             self.column_stats[col] = {}
         self.column_stats[col].update(stats)
+
+    def meta_path(self) -> str:
+        """Возвращает путь к файлу meta.pkl рядом с parquet.
+
+        Returns:
+            Путь к meta.pkl (заменяет main.parquet на meta.pkl).
+        """
+        return self.file_path.replace("main.parquet", "meta.pkl")
+
+    def rows_for_size(self, target_size: str) -> int:
+        """Вычисляет количество строк для заданного размера данных.
+
+        Пропорционально масштабирует row_count исходя из соотношения
+        target_size / file_size_bytes.
+
+        Args:
+            target_size: Целевой размер (например, "100MB", "1GB", "10GB").
+
+        Returns:
+            Количество строк для достижения target_size.
+            Если target_size >= file_size, возвращает row_count (все строки).
+
+        Examples:
+            >>> meta.row_count = 10_000_000
+            >>> meta.file_size_bytes = 1_000_000_000  # 1GB
+            >>> meta.rows_for_size("100MB")
+            1000000
+            >>> meta.rows_for_size("500MB")
+            5000000
+        """
+        if self.file_size_bytes == 0 or self.row_count == 0:
+            return self.row_count
+
+        # Парсим target_size
+        target_bytes = self._parse_size(target_size)
+
+        # Если запрошено больше чем есть — возвращаем всё
+        if target_bytes >= self.file_size_bytes:
+            return self.row_count
+
+        # Пропорционально вычисляем количество строк
+        ratio = target_bytes / self.file_size_bytes
+        return max(1, int(self.row_count * ratio))
+
+    @staticmethod
+    def _parse_size(size_str: str) -> int:
+        """Парсит строку размера в байты.
+
+        Args:
+            size_str: Строка вида "100MB", "1GB", "500KB".
+
+        Returns:
+            Размер в байтах.
+        """
+        size_str = size_str.strip().upper()
+        multipliers = {
+            "B": 1,
+            "KB": 1024,
+            "MB": 1024 ** 2,
+            "GB": 1024 ** 3,
+            "TB": 1024 ** 4,
+        }
+
+        for suffix, mult in sorted(multipliers.items(), key=lambda x: -len(x[0])):
+            if size_str.endswith(suffix):
+                num = float(size_str[: -len(suffix)])
+                return int(num * mult)
+
+        return int(size_str)
+
+    def save(self, path: str | None = None) -> str:
+        """Сохраняет Meta в pickle файл.
+
+        Args:
+            path: Путь для сохранения. Если None, сохраняет рядом с parquet.
+
+        Returns:
+            Путь к сохранённому файлу.
+        """
+        save_path = path or self.meta_path()
+        with open(save_path, "wb") as f:
+            pickle.dump(self, f)
+        logger.info("Meta сохранена: %s", save_path)
+        return save_path
+
+    @classmethod
+    def load(cls, path: str) -> "Meta":
+        """Загружает Meta из pickle файла.
+
+        Args:
+            path: Путь к pickle файлу. Может быть путём к meta.pkl
+                  или к директории/parquet файлу (автоматически найдёт meta.pkl).
+
+        Returns:
+            Загруженный объект Meta.
+
+        Raises:
+            FileNotFoundError: Если файл не найден.
+            pickle.UnpicklingError: Если файл повреждён.
+        """
+        # Если передан путь к parquet или директории, ищем meta.pkl
+        if path.endswith(".parquet"):
+            path = path.replace("main.parquet", "meta.pkl")
+        elif os.path.isdir(path):
+            path = os.path.join(path, "meta.pkl")
+
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Meta файл не найден: {path}")
+
+        with open(path, "rb") as f:
+            meta = pickle.load(f)
+
+        logger.info("Meta загружена: %s", path)
+        return meta
 
 
 def _n_chunks(total: int, chunk_size: int) -> int:
@@ -427,8 +542,10 @@ class GeneratorConfig:
         n_categories: Количество категориальных колонок.
         category_cardinality: Количество уникальных значений в категории.
         category_method: Метод генерации категорий ("kmeans" или "quantile").
-        task: Тип ML-задачи ("regression", "binary", "multiclass", "ranking").
-            None для генерации данных без таргета (например, для кластеризации).
+        tasks: Список ML-задач для генерации таргетов.
+            Допустимые значения: "regression", "binary", "multiclass", "ranking".
+            Каждая задача создаёт свою колонку: target_regression, target_binary и т.д.
+            Пустой список для данных без таргета (например, для кластеризации).
         target_method: Метод генерации целевой переменной.
         target_noise: Уровень шума в таргете (0-1).
         n_classes: Количество классов для multiclass.
@@ -452,8 +569,9 @@ class GeneratorConfig:
     category_cardinality: int = DEFAULT_CATEGORY_CARDINALITY
     category_method: Literal["kmeans", "quantile"] = "kmeans"
 
-    # Таргет
-    task: Literal["regression", "binary", "multiclass", "ranking"] | None = None
+    # Таргеты — можно указать несколько задач
+    # Каждая задача создаёт свою колонку: target_regression, target_binary и т.д.
+    tasks: list[str] = field(default_factory=list)  # ["regression", "binary", "multiclass", "ranking"]
     target_method: Literal[
         "linear",
         "polynomial",
@@ -499,6 +617,15 @@ class GeneratorConfig:
 
         if self.n_classes < 2:
             raise ValueError("n_classes должен быть >= 2")
+
+        # Валидация tasks
+        valid_tasks = {"regression", "binary", "multiclass", "ranking"}
+        for task in self.tasks:
+            if task not in valid_tasks:
+                raise ValueError(
+                    f"Неизвестный тип задачи: {task}. "
+                    f"Допустимые: {', '.join(sorted(valid_tasks))}"
+                )
 
         if not 0.0 <= self.target_noise <= 1.0:
             raise ValueError("target_noise должен быть в диапазоне [0, 1]")
@@ -547,28 +674,30 @@ class GeneratorConfig:
         }
         classification_methods = {"xor", "circles", "moons", "clusters"}
 
-        if (
-            self.task in ("binary", "multiclass")
-            and self.target_method in regression_methods
-        ):
-            logger.warning(
-                "target_method '%s' является регрессионным и будет бинаризован "
-                "для задачи '%s'",
-                self.target_method,
-                self.task,
-            )
+        # Проверяем совместимость target_method с каждой задачей
+        for task in self.tasks:
+            if (
+                task in ("binary", "multiclass")
+                and self.target_method in regression_methods
+            ):
+                logger.warning(
+                    "target_method '%s' является регрессионным и будет бинаризован "
+                    "для задачи '%s'",
+                    self.target_method,
+                    task,
+                )
 
-        if self.task == "regression" and self.target_method in classification_methods:
-            raise ValueError(
-                f"target_method '{self.target_method}' не поддерживается для задачи "
-                f"'regression'. Используйте один из: {sorted(regression_methods)}"
-            )
+            if task == "regression" and self.target_method in classification_methods:
+                raise ValueError(
+                    f"target_method '{self.target_method}' не поддерживается для задачи "
+                    f"'regression'. Используйте один из: {sorted(regression_methods)}"
+                )
 
-        if self.task == "multiclass" and self.target_method in classification_methods:
-            raise ValueError(
-                f"target_method '{self.target_method}' не поддерживается для задачи "
-                f"'multiclass'. Используйте один из: {sorted(regression_methods)}"
-            )
+            if task == "multiclass" and self.target_method in classification_methods:
+                raise ValueError(
+                    f"target_method '{self.target_method}' не поддерживается для задачи "
+                    f"'multiclass'. Используйте один из: {sorted(regression_methods)}"
+                )
 
 
 class Transformer(ABC):
@@ -1329,7 +1458,7 @@ class RegressionTarget(TargetGeneratorMixin, Transformer):
             Обновлённая Meta с информацией о таргете.
         """
         informative_cols = meta.get_columns_by_tag("informative", "numeric")
-        col_name = "target_reg"
+        col_name = self.name  # Используем имя трансформера для имени колонки
         generator = self._get_regression_generator(self.method)
 
         # Оцениваем масштаб шума на sample (отдельный rng для изоляции)
@@ -1538,7 +1667,7 @@ class BinaryTarget(TargetGeneratorMixin, Transformer):
             Обновлённая Meta с информацией о таргете.
         """
         informative_cols = meta.get_columns_by_tag("informative", "numeric")
-        col_name = "target_bin"
+        col_name = self.name  # Используем имя трансформера для имени колонки
         cols_sql = ", ".join(informative_cols)
         classification_methods = {"xor", "circles", "moons", "clusters"}
         is_regression_method = self.method not in classification_methods
@@ -1705,7 +1834,7 @@ class MulticlassTarget(TargetGeneratorMixin, Transformer):
             Обновлённая Meta с информацией о таргете.
         """
         informative_cols = meta.get_columns_by_tag("informative", "numeric")
-        col_name = "target_multi"
+        col_name = self.name  # Используем имя трансформера для имени колонки
         generator = self._get_regression_generator(self.method)
 
         # Оцениваем границы бинов на sample (отдельный rng для изоляции)
@@ -1788,6 +1917,23 @@ class RankingTarget(Transformer):
 
         # Генерируем target_rank через SQL:
         # 1. Ранжируем target_reg внутри каждой группы (query_id)
+        # Находим колонку regression target для ранжирования
+        # Она может называться target_regression, target_reg или regression_target
+        regression_col = None
+        for col, tags in meta.column_tags.items():
+            if "target" in tags and "regression" in tags:
+                regression_col = col
+                break
+
+        if regression_col is None:
+            raise ValueError(
+                "RankingTarget требует RegressionTarget. "
+                "Убедитесь, что 'regression' указан в tasks."
+            )
+
+        # Формируем имена колонок с учётом self.name
+        rank_col_name = self.name  # или target_ranking
+
         # 2. Нормализуем ранг в [0, 1]
         # 3. Бинним на n_levels уровней
         _atomic_write(
@@ -1800,10 +1946,10 @@ class RankingTarget(Transformer):
                     FLOOR(
                         PERCENT_RANK() OVER (
                             PARTITION BY {query_col}
-                            ORDER BY target_reg
+                            ORDER BY {regression_col}
                         ) * {self.n_levels - PERCENT_RANK_EPSILON}
                     ) AS INT8
-                ) AS target_rank
+                ) AS {rank_col_name}
             FROM '{meta.file_path}' AS m
             """,
             meta.file_path,
@@ -1813,8 +1959,8 @@ class RankingTarget(Transformer):
         meta.columns["query_id"] = DType.INT64
         meta.column_tags["query_id"] = ["ranking"]
 
-        meta.columns["target_rank"] = DType.INT8
-        meta.column_tags["target_rank"] = ["target", "ranking"]
+        meta.columns[rank_col_name] = DType.INT8
+        meta.column_tags[rank_col_name] = ["target", "ranking"]
 
         meta.completed_steps.append(self.name)
         return meta
@@ -1858,10 +2004,28 @@ class Datetime(Transformer):
         self.seed = seed
         self.chunk_size = chunk_size
 
+    def _find_regression_target_col(self, meta: Meta) -> str:
+        """Находит колонку regression target по тегам.
+
+        Returns:
+            Имя колонки regression target.
+
+        Raises:
+            ValueError: Если колонка не найдена.
+        """
+        for col, tags in meta.column_tags.items():
+            if "target" in tags and "regression" in tags:
+                return col
+        raise ValueError(
+            "Datetime требует RegressionTarget. "
+            "Убедитесь, что 'regression' указан в tasks."
+        )
+
     def _compute_global_stats(
         self,
         db: duckdb.DuckDBPyConnection,
         meta: Meta,
+        target_col: str,
         feature_col: str,
     ) -> dict[str, float]:
         """Вычисляет глобальные min/max для нормализации.
@@ -1871,14 +2035,15 @@ class Datetime(Transformer):
         Args:
             db: Соединение с DuckDB.
             meta: Текущая метаинформация.
+            target_col: Имя колонки таргета.
             feature_col: Имя колонки фичи.
 
         Returns:
             Словарь с min/max значениями для target и feature.
         """
         # Проверяем кеш
-        target_min = meta.get_column_stat("target_reg", "min")
-        target_max = meta.get_column_stat("target_reg", "max")
+        target_min = meta.get_column_stat(target_col, "min")
+        target_max = meta.get_column_stat(target_col, "max")
         feature_min = meta.get_column_stat(feature_col, "min")
         feature_max = meta.get_column_stat(feature_col, "max")
 
@@ -1896,15 +2061,15 @@ class Datetime(Transformer):
         stats = db.execute(
             f"""
             SELECT
-                MIN(target_reg) as target_min,
-                MAX(target_reg) as target_max,
+                MIN({target_col}) as target_min,
+                MAX({target_col}) as target_max,
                 MIN({feature_col}) as feature_min,
                 MAX({feature_col}) as feature_max
             FROM '{meta.file_path}'
             """
         ).fetchone()
 
-        meta.set_column_stats("target_reg", {"min": stats[0], "max": stats[1]})
+        meta.set_column_stats(target_col, {"min": stats[0], "max": stats[1]})
         meta.set_column_stats(feature_col, {"min": stats[2], "max": stats[3]})
 
         return {
@@ -1917,7 +2082,7 @@ class Datetime(Transformer):
     def transform(self, db: duckdb.DuckDBPyConnection, meta: Meta) -> Meta:
         """Генерирует timestamp через линейную комбинацию таргета и фичи.
 
-        Формула: normalized = w1 * norm(target_reg) + w2 * norm(feature)
+        Формула: normalized = w1 * norm(target) + w2 * norm(feature)
         Затем масштабирование в диапазон дат + опциональный шум.
 
         Использует чанкованную обработку для экономии памяти.
@@ -1929,12 +2094,15 @@ class Datetime(Transformer):
         Returns:
             Обновлённая Meta с колонкой timestamp.
         """
+        # Находим regression target по тегам
+        target_col = self._find_regression_target_col(meta)
+
         # Берём первую информативную фичу
         informative_cols = meta.get_columns_by_tag("informative", "numeric")
         feature_col = informative_cols[0]
 
         # Вычисляем глобальные min/max для корректной нормализации
-        stats = self._compute_global_stats(db, meta, feature_col)
+        stats = self._compute_global_stats(db, meta, target_col, feature_col)
         target_range = stats["target_max"] - stats["target_min"] + EPSILON
         feature_range = stats["feature_max"] - stats["feature_min"] + EPSILON
 
@@ -1948,7 +2116,7 @@ class Datetime(Transformer):
 
         with _chunked_target_writer(db, meta, "timestamp", "DOUBLE") as write_chunk:
             for chunk_idx, (ids, features) in enumerate(
-                _iter_chunks(db, meta, ["target_reg", feature_col], self.chunk_size)
+                _iter_chunks(db, meta, [target_col, feature_col], self.chunk_size)
             ):
                 target = features[:, 0]
                 feature = features[:, 1]
@@ -2388,6 +2556,15 @@ class Pipeline:
                 self._save_meta(meta)
 
             logger.info("Pipeline завершён успешно, строк: %d", meta.row_count)
+
+            # Записываем размер файла
+            if os.path.exists(meta.file_path):
+                meta.file_size_bytes = os.path.getsize(meta.file_path)
+                logger.info("Размер файла: %.2f MB", meta.file_size_bytes / (1024 ** 2))
+
+            # Сохраняем финальную meta рядом с parquet для использования бенчмарком
+            meta.save()
+
             return meta
         finally:
             db.close()
@@ -2412,16 +2589,16 @@ class PipelineFactory:
         Raises:
             ValueError: Если конфигурация несовместима.
         """
-        # Datetime требует таргет — проверяем что task задана или будет создан
+        # Datetime требует таргет — проверяем что tasks заданы или будет создан
         # implicit RegressionTarget
-        if config.datetime_range is not None and config.task is None:
+        if config.datetime_range is not None and not config.tasks:
             logger.warning(
-                "datetime_range задан при task=None: будет создан вспомогательный "
+                "datetime_range задан при tasks=[]: будет создан вспомогательный "
                 "RegressionTarget для генерации timestamp."
             )
 
         # Ranking требует category (явно или создастся неявно)
-        if config.task == "ranking" and config.n_categories == 0:
+        if "ranking" in config.tasks and config.n_categories == 0:
             logger.info(
                 "task='ranking' без категорий: будет создана вспомогательная "
                 "категория для query_id."
@@ -2485,7 +2662,7 @@ class PipelineFactory:
                 n_categories=config.n_categories,
                 category_cardinality=config.category_cardinality,
                 category_method=config.category_method,
-                task=config.task,
+                tasks=config.tasks,
                 target_method=config.target_method,
                 target_noise=config.target_noise,
                 n_classes=config.n_classes,
@@ -2583,47 +2760,60 @@ class PipelineFactory:
     def _add_target_steps(
         self, config: GeneratorConfig, steps: list[Transformer]
     ) -> None:
-        """Добавляет шаги таргетов в зависимости от задачи.
+        """Добавляет шаги таргетов для каждой задачи из config.tasks.
+
+        Каждая задача создаёт свою колонку с именем target_{task}.
+        Например: target_regression, target_binary, target_multiclass.
 
         Args:
             config: Конфигурация генератора.
             steps: Список шагов для модификации.
         """
-        if config.task == "regression":
-            steps.append(
-                RegressionTarget(
-                    method=config.target_method,
-                    noise=config.target_noise,
-                    seed=config.seed,
+        has_regression = False  # Для ranking и datetime нужен regression
+
+        for task in config.tasks:
+            if task == "regression":
+                steps.append(
+                    RegressionTarget(
+                        method=config.target_method,
+                        noise=config.target_noise,
+                        seed=config.seed,
+                        name="target_regression",
+                    )
                 )
-            )
-        elif config.task == "binary":
-            steps.append(
-                BinaryTarget(
-                    method=config.target_method,
-                    seed=config.seed,
+                has_regression = True
+            elif task == "binary":
+                steps.append(
+                    BinaryTarget(
+                        method=config.target_method,
+                        seed=config.seed,
+                        name="target_binary",
+                    )
                 )
-            )
-        elif config.task == "multiclass":
-            steps.append(
-                MulticlassTarget(
-                    n_classes=config.n_classes,
-                    method=config.target_method,
-                    seed=config.seed,
+            elif task == "multiclass":
+                steps.append(
+                    MulticlassTarget(
+                        n_classes=config.n_classes,
+                        method=config.target_method,
+                        seed=config.seed,
+                        name="target_multiclass",
+                    )
                 )
-            )
-        elif config.task == "ranking":
-            # Ranking требует regression target + category
-            steps.append(
-                RegressionTarget(
-                    method=config.target_method,
-                    noise=config.target_noise,
-                    seed=config.seed,
-                )
-            )
-            if not config.n_categories:
-                steps.append(Category(seed=config.seed, name="category_for_ranking"))
-            steps.append(RankingTarget())
+            elif task == "ranking":
+                # Ranking требует regression target для relevance score
+                if not has_regression:
+                    steps.append(
+                        RegressionTarget(
+                            method=config.target_method,
+                            noise=config.target_noise,
+                            seed=config.seed,
+                            name="target_regression",
+                        )
+                    )
+                    has_regression = True
+                if not config.n_categories:
+                    steps.append(Category(seed=config.seed, name="category_for_ranking"))
+                steps.append(RankingTarget(name="target_ranking"))
 
     def _add_datetime_steps(
         self, config: GeneratorConfig, steps: list[Transformer]

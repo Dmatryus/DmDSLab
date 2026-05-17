@@ -195,13 +195,15 @@ def test_public_functions_raise_not_implemented() -> None:
 def test_fit_select_raises_not_implemented() -> None:
     """`fit_select` конкретного метода-заглушки поднимает `NotImplementedError`.
 
-    Берём конкретный наследник `FSMethod` (заглушку filter-метода): сам ABC
-    инстанцировать нельзя, поэтому проверяем тело `fit_select` на наследнике.
+    Берём конкретный наследник `FSMethod`, ещё не реализованный (заглушку
+    wrapper-метода): сам ABC инстанцировать нельзя, поэтому проверяем тело
+    `fit_select` на наследнике. filter-методы реализованы эпиком E-005.2 —
+    их `fit_select` больше не заглушка, поэтому проверяется wrapper-метод.
     """
-    from feature_selection_benchmark.methods.filter_methods import (
-        VarianceThresholdMethod,
+    from feature_selection_benchmark.methods.wrapper_methods import (
+        RFEMethod,
     )
 
-    method = VarianceThresholdMethod()
+    method = RFEMethod()
     with pytest.raises(NotImplementedError):
         method.fit_select(X_train=None, y_train=None)  # type: ignore[arg-type]

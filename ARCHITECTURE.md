@@ -183,7 +183,7 @@ def list_methods(
 def register_method(
     name: str,                   # уникальное имя метода
     method,                      # callable или экземпляр класса-наследника FSMethod
-    group: str,                  # "filter" | "wrapper" | "embedded" | "shap"
+    group: str,                  # "filter" | "wrapper" | "embedded" | "shap" | "permutation"
 ) -> None:
     ...
 ```
@@ -196,7 +196,7 @@ import pandas as pd
 
 class FSMethod(ABC):
     name: str
-    group: str  # "filter" | "wrapper" | "embedded" | "shap"
+    group: str  # "filter" | "wrapper" | "embedded" | "shap" | "permutation"
     supported_tasks: list[str]  # ["classification"] | ["regression"] | ["classification", "regression"]
 
     @abstractmethod
@@ -246,7 +246,7 @@ CREATE TABLE method_results (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id           TEXT NOT NULL REFERENCES runs(id),
     method_name      TEXT NOT NULL,
-    "group"          TEXT NOT NULL,  -- "filter" | "wrapper" | "embedded" | "shap"
+    "group"          TEXT NOT NULL,  -- "filter" | "wrapper" | "embedded" | "shap" | "permutation"
     selected_features TEXT NOT NULL, -- JSON-массив строк: ["feature_a", "feature_b", ...]
     cv_score         REAL NOT NULL,
     score_std        REAL NOT NULL,

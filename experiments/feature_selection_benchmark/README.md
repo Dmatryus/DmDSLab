@@ -129,13 +129,22 @@ print(result.ranked_results)
    pip install -e "experiments/feature_selection_benchmark[dev]"
    ```
 
-3. Установить git-хуки pre-commit (ruff + mypy):
+3. Установить git-хуки pre-commit (ruff + mypy). Конфиг `.pre-commit-config.yaml`
+   лежит в каталоге пакета (монорепо), поэтому команды запускаются из корня
+   репозитория с явным `--config`:
 
    ```bash
-   pre-commit install
+   pre-commit install --config experiments/feature_selection_benchmark/.pre-commit-config.yaml
    ```
 
    После этого `ruff` и `mypy` запускаются автоматически на каждом коммите.
+
+4. (Опционально) Прогнать все хуки по всей кодовой базе вручную — например,
+   перед первым коммитом или после обновления конфига:
+
+   ```bash
+   pre-commit run --all-files --config experiments/feature_selection_benchmark/.pre-commit-config.yaml
+   ```
 
 Запуск тестов:
 

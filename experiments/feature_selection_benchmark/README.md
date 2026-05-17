@@ -22,8 +22,8 @@ null importance и другие — и возвращает ранжирован
 Одновременно инструмент даёт разработчикам AutoML единый интерфейс и
 зафиксированные best practices для добавления новых FS-методов.
 
-Подробнее: [`../../OVERVIEW.md`](../../OVERVIEW.md) (обзор и скоуп),
-[`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) (стек и API).
+Подробнее: [`OVERVIEW.md`](OVERVIEW.md) (обзор и скоуп),
+[`ARCHITECTURE.md`](ARCHITECTURE.md) (стек и API).
 
 ## Статус
 
@@ -118,7 +118,7 @@ print(result.ranked_results)
 `run_benchmark` возвращает `BenchmarkResult` с полем `ranked_results`
 (`pandas.DataFrame` с колонками `method_name`, `group`, `selected_features`,
 `cv_score`, `score_std`, `rank`, `duration_sec`). Полное описание сигнатур —
-в [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) §4.
+в [`ARCHITECTURE.md`](ARCHITECTURE.md) §4.
 
 ## Contributing
 

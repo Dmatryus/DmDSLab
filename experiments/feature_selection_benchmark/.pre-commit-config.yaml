@@ -1,0 +1,23 @@
+# Pre-commit hooks for feature_selection_benchmark.
+# Install once per clone:  pre-commit install
+# Run manually on all files: pre-commit run --all-files
+#
+# Ruff handles linting (incl. import sorting, rule group `I`) and formatting;
+# mypy performs static type checking. Config for both lives in pyproject.toml.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.0
+    hooks:
+      # Linter — auto-fixes what it safely can (incl. import order).
+      - id: ruff
+        args: [--fix]
+      # Formatter.
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.0
+    hooks:
+      - id: mypy
+        # Type-check the package only; config (incl. python_version,
+        # ignore_missing_imports) is read from pyproject.toml.
+        files: ^experiments/feature_selection_benchmark/feature_selection_benchmark/

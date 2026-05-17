@@ -58,3 +58,7 @@ nul
 
 # Claude Code
 .claude/
+
+# dm-cc-assistant working artifacts (plans, reports, backlog, worktrees)
+.task/
+.worktrees/

@@ -17,7 +17,7 @@ from typing import Any, Literal
 
 import pandas as pd
 
-from .methods.base import MethodInfo
+from .methods.base import FSMethod, MethodInfo
 
 __all__ = [
     "Dataset",
@@ -135,12 +135,16 @@ def list_methods(task: str | None = None) -> list[MethodInfo]:
     raise NotImplementedError
 
 
-def register_method(name: str, method: Any, group: str) -> None:
+def register_method(
+    name: str,
+    method: FSMethod | type[FSMethod],
+    group: str,
+) -> None:
     """Регистрирует FS-метод в реестре.
 
     Args:
         name: Уникальное имя метода.
-        method: Callable или экземпляр класса-наследника `FSMethod`.
+        method: Экземпляр или класс-наследник `FSMethod`.
         group: Группа метода — ``"filter"`` | ``"wrapper"`` |
             ``"embedded"`` | ``"shap"``.
     """

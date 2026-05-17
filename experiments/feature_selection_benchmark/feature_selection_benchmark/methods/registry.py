@@ -19,12 +19,16 @@ __all__ = [
 ]
 
 
-def register(name: str, method: FSMethod, group: str) -> None:
+def register(
+    name: str,
+    method: FSMethod | type[FSMethod],
+    group: str,
+) -> None:
     """Регистрирует FS-метод в реестре.
 
     Args:
         name: Уникальное имя метода.
-        method: Экземпляр класса-наследника `FSMethod`.
+        method: Экземпляр или класс-наследник `FSMethod`.
         group: Группа метода — ``"filter"`` | ``"wrapper"`` |
             ``"embedded"`` | ``"shap"``.
     """

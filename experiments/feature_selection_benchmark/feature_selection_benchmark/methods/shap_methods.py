@@ -44,7 +44,7 @@ class PermutationImportanceMethod(FSMethod):
     """Отбор признаков по важности перестановок (permutation importance)."""
 
     name = "permutation_importance"
-    group = "shap"
+    group = "permutation"
     supported_tasks = ["classification", "regression"]
 
     def fit_select(
@@ -60,7 +60,7 @@ class NullImportanceMethod(FSMethod):
     """Отбор признаков по null-важностям (target permutation)."""
 
     name = "null_importance"
-    group = "shap"
+    group = "permutation"
     supported_tasks = ["classification", "regression"]
 
     def fit_select(

@@ -39,6 +39,8 @@ SUBMODULES = [
 ]
 
 # Публичные имена, реэкспортируемые корневым __init__.py.
+# E-005 добавил `HyperParam` — declarative-контракт гиперпараметров,
+# нужный Персоне 2 при объявлении нового FS-метода (review PR-3).
 PUBLIC_NAMES = [
     "run_benchmark",
     "get_leaderboard",
@@ -48,16 +50,27 @@ PUBLIC_NAMES = [
     "BenchmarkResult",
     "FSMethod",
     "MethodInfo",
+    "HyperParam",
 ]
 
-# Ожидаемые 6 полей датакласса MethodInfo (ARCHITECTURE §4, план E-001.3).
-METHOD_INFO_FIELDS = {
+# Поля датакласса MethodInfo. Базовые 6 зафиксированы каркасом E-001.3
+# (ARCHITECTURE §4); E-005.1 добавил group / supported_tasks / available /
+# unavailable_reason — метаданные группы и статус доступности метода для
+# `list_registered` (план E-005, OQ-2). Все добавленные поля имеют
+# дефолты, поэтому контракт построения `MethodInfo` обратно совместим.
+METHOD_INFO_CORE_FIELDS = {
     "name",
     "description",
     "requires_target",
     "supports_multiclass",
     "output_type",
     "hyperparameters",
+}
+METHOD_INFO_FIELDS = METHOD_INFO_CORE_FIELDS | {
+    "group",
+    "supported_tasks",
+    "available",
+    "unavailable_reason",
 }
 
 
@@ -81,7 +94,7 @@ def test_submodule_imports(submodule: str) -> None:
 
 
 def test_public_api_in_all() -> None:
-    """`__all__` корневого пакета содержит ровно 8 публичных имён."""
+    """`__all__` корневого пакета содержит ровно ожидаемые публичные имена."""
     import feature_selection_benchmark as fsb
 
     assert set(fsb.__all__) == set(PUBLIC_NAMES)
@@ -131,10 +144,15 @@ def test_method_info_is_dataclass() -> None:
 
 
 def test_method_info_has_expected_fields() -> None:
-    """`MethodInfo` содержит ровно 6 ожидаемых полей."""
+    """`MethodInfo` содержит ожидаемые поля.
+
+    6 базовых полей каркаса E-001.3 + 4 поля E-005.1 (group /
+    supported_tasks / available / unavailable_reason).
+    """
     from feature_selection_benchmark import MethodInfo
 
     actual = {f.name for f in fields(MethodInfo)}
+    assert METHOD_INFO_CORE_FIELDS <= actual
     assert actual == METHOD_INFO_FIELDS
 
 
@@ -175,18 +193,3 @@ def test_public_functions_raise_not_implemented() -> None:
         list_methods()
     with pytest.raises(NotImplementedError):
         register_method(name="x", method=None, group="filter")
-
-
-def test_fit_select_raises_not_implemented() -> None:
-    """`fit_select` конкретного метода-заглушки поднимает `NotImplementedError`.
-
-    Берём конкретный наследник `FSMethod` (заглушку filter-метода): сам ABC
-    инстанцировать нельзя, поэтому проверяем тело `fit_select` на наследнике.
-    """
-    from feature_selection_benchmark.methods.filter_methods import (
-        VarianceThresholdMethod,
-    )
-
-    method = VarianceThresholdMethod()
-    with pytest.raises(NotImplementedError):
-        method.fit_select(X_train=None, y_train=None)  # type: ignore[arg-type]

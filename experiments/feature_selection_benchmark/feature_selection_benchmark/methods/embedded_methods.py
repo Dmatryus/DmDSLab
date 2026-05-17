@@ -24,6 +24,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from ._utils import is_classification
 from .base import FSMethod, HyperParam, MethodInfo
 from .registry import register
 
@@ -46,33 +47,14 @@ def _catboost_unavailable_reason() -> str | None:
     return None
 
 
-def _is_classification(y_train: pd.Series) -> bool:
-    """Эвристически определяет, является ли задача классификацией.
-
-    Классификация — нечисловой target либо малое число уникальных
-    значений (целочисленные метки классов).
-
-    Args:
-        y_train: Целевая переменная обучающей выборки.
-
-    Returns:
-        ``True`` для задачи классификации, ``False`` для регрессии.
-    """
-    if not pd.api.types.is_numeric_dtype(y_train):
-        return True
-    nunique = y_train.nunique()
-    if nunique <= 2:
-        return True
-    return bool(pd.api.types.is_integer_dtype(y_train) and nunique <= 20)
-
-
 class LassoMethod(FSMethod):
     """Отбор признаков через L1-регуляризацию (Lasso / ElasticNet).
 
     Обучает линейную модель с L1-регуляризацией (для регрессии —
-    `Lasso`/`ElasticNet`, для классификации — `LogisticRegression`
-    с `penalty="l1"`) и отбирает признаки с ненулевыми коэффициентами.
-    Сила регуляризации и доля L1 (`l1_ratio`) — гиперпараметры.
+    `ElasticNet`, для классификации — `LogisticRegression` с
+    `solver="saga"` и `l1_ratio`) и отбирает признаки с ненулевыми
+    коэффициентами. Сила регуляризации и доля L1 (`l1_ratio`) —
+    гиперпараметры.
     """
 
     name = "lasso"
@@ -134,7 +116,7 @@ class LassoMethod(FSMethod):
         l1_ratio = float(hyperparams.get("l1_ratio", 1.0))
         features = list(X_train.columns)
 
-        if _is_classification(y_train):
+        if is_classification(y_train):
             # C — обратная сила регуляризации в LogisticRegression;
             # l1_ratio задаёт долю L1 (1.0 — чистый L1, как Lasso).
             model = LogisticRegression(
@@ -250,7 +232,7 @@ class CatBoostSelectMethod(FSMethod):
         if random_seed is not None:
             params["random_seed"] = int(random_seed)
 
-        if _is_classification(y_train):
+        if is_classification(y_train):
             model: Any = CatBoostClassifier(**params)
         else:
             model = CatBoostRegressor(**params)
@@ -359,7 +341,7 @@ class TreeGainImportanceMethod(FSMethod):
         if random_seed is not None:
             params["random_seed"] = int(random_seed)
 
-        if _is_classification(y_train):
+        if is_classification(y_train):
             model: Any = CatBoostClassifier(**params)
         else:
             model = CatBoostRegressor(**params)

@@ -29,6 +29,7 @@ from sklearn.feature_selection import (
     mutual_info_regression,
 )
 
+from ._utils import is_classification
 from .base import FSMethod, HyperParam, MethodInfo
 from .registry import register
 
@@ -38,27 +39,6 @@ __all__ = [
     "MutualInformationMethod",
     "MRMRMethod",
 ]
-
-
-def _is_classification(y: pd.Series) -> bool:
-    """Эвристически определяет, является ли целевая переменная классовой.
-
-    Args:
-        y: Целевая переменная.
-
-    Returns:
-        ``True``, если `y` похожа на метки классов (нечисловой dtype или
-        малое число уникальных целочисленных значений).
-    """
-    if not pd.api.types.is_numeric_dtype(y):
-        return True
-    nunique = y.nunique(dropna=True)
-    if nunique <= 2:
-        return True
-    # Целочисленные значения с небольшим числом уникальных — классификация.
-    values = y.dropna()
-    is_integer = bool(np.all(np.equal(np.mod(values, 1), 0)))
-    return is_integer and nunique <= max(20, int(0.05 * len(values)))
 
 
 def _top_k(scores: dict[str, float], k: int) -> list[str]:
@@ -268,7 +248,7 @@ class MutualInformationMethod(FSMethod):
         random_state = hyperparams.get("random_state", 0)
         mi_fn = (
             mutual_info_classif
-            if _is_classification(y_train)
+            if is_classification(y_train)
             else mutual_info_regression
         )
         mi_values = mi_fn(
@@ -368,7 +348,7 @@ class MRMRMethod(FSMethod):
         k = max(1, min(k, X_train.shape[1]))
         mrmr_fn = (
             mrmr_classif
-            if _is_classification(y_train)
+            if is_classification(y_train)
             else mrmr_regression
         )
         selected = mrmr_fn(X=X_train, y=y_train, K=k, show_progress=False)

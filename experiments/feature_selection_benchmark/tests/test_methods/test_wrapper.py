@@ -46,13 +46,20 @@ def _boruta_installed() -> bool:
 def wrapper_registry():
     """Очищает реестр и регистрирует только wrapper-методы.
 
+    Глобальный реестр снимается snapshot'ом до yield и восстанавливается
+    после — иначе teardown оставил бы реестр без методов других групп
+    (filter/embedded/shap), порождая order-dependent flakiness тестов,
+    работающих с глобальным реестром (R-1).
+
     Yields:
         Модуль `registry` с наполнением из wrapper-методов.
     """
+    snapshot = dict(registry._REGISTRY)
     registry.clear_registry()
     importlib.reload(wrapper_methods)
     yield registry
     registry.clear_registry()
+    registry._REGISTRY.update(snapshot)
 
 
 @pytest.fixture

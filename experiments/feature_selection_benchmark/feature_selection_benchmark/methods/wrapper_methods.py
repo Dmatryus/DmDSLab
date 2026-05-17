@@ -34,6 +34,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from ._utils import is_classification
 from .base import FSMethod, HyperParam, MethodInfo
 from .registry import register
 
@@ -43,30 +44,6 @@ __all__ = [
     "BorutaMethod",
     "StabilitySelectionMethod",
 ]
-
-
-def _is_classification(y_train: pd.Series) -> bool:
-    """Определяет тип задачи по целевой переменной.
-
-    Эвристика: нечисловой dtype — всегда классификация; числовой —
-    классификация, если значения целочисленные и число уникальных
-    значений мало (≤ 20 и < 5 % длины), иначе регрессия. Согласована с
-    автоопределением задачи в `api.py` (только два типа задач — CONSTRAINT 2).
-
-    Args:
-        y_train: Обучающая целевая переменная.
-
-    Returns:
-        ``True`` для классификации, ``False`` для регрессии.
-    """
-    if not pd.api.types.is_numeric_dtype(y_train):
-        return True
-    values = y_train.to_numpy()
-    n_unique = len(np.unique(values))
-    if n_unique <= 2:
-        return True
-    is_integral = np.all(np.equal(np.mod(values, 1), 0))
-    return bool(is_integral and n_unique <= 20 and n_unique < 0.05 * len(values))
 
 
 def _resolve_n_features(fraction: float, n_total: int) -> int:
@@ -190,7 +167,7 @@ class RFEMethod(FSMethod):
         random_seed = hyperparams.get("random_seed")
 
         n_features = _resolve_n_features(fraction, X_train.shape[1])
-        estimator = _make_estimator(_is_classification(y_train), random_seed)
+        estimator = _make_estimator(is_classification(y_train), random_seed)
         selector = RFE(
             estimator=estimator,
             n_features_to_select=n_features,
@@ -266,7 +243,7 @@ class SequentialFeatureSelectorMethod(FSMethod):
         n_features = _resolve_n_features(fraction, n_total)
         n_features = min(n_features, max(1, n_total - 1))
 
-        estimator = _make_estimator(_is_classification(y_train), random_seed)
+        estimator = _make_estimator(is_classification(y_train), random_seed)
         selector = SequentialFeatureSelector(
             estimator=estimator,
             n_features_to_select=n_features,
@@ -365,7 +342,7 @@ class BorutaMethod(FSMethod):
         include_tentative = bool(hyperparams.get("include_tentative", False))
         random_seed = hyperparams.get("random_seed")
 
-        estimator = _make_estimator(_is_classification(y_train), random_seed)
+        estimator = _make_estimator(is_classification(y_train), random_seed)
         selector = BorutaPy(
             estimator=estimator,
             n_estimators="auto",
@@ -457,7 +434,7 @@ class StabilitySelectionMethod(FSMethod):
         columns = list(X_train.columns)
         n_rows = X_train.shape[0]
         sample_size = max(2, int(round(sample_fraction * n_rows)))
-        is_clf = _is_classification(y_train)
+        is_clf = is_classification(y_train)
 
         rng = np.random.default_rng(random_seed)
         X_values = X_train.to_numpy()

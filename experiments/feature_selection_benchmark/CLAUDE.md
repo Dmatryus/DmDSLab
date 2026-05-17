@@ -1,6 +1,7 @@
 # feature_selection_benchmark
 
 > **Edit log:**
+> - 2026-05-17 · v0.3.0 · release v0.2.0 · дерево пакета дополнено `storage/dataset_id.py`
 > - 2026-05-16 · v0.3.0 · claude-md-generator · создан
 
 ## WHY
@@ -31,7 +32,8 @@ experiments/feature_selection_benchmark/
 │   ├── storage/
 │   │   ├── db.py                    # SQLite-соединение, миграции
 │   │   ├── leaderboard.py           # чтение/запись/ранжирование
-│   │   └── checkpoint.py            # сохранение/загрузка состояния прогона
+│   │   ├── checkpoint.py            # сохранение/загрузка состояния прогона
+│   │   └── dataset_id.py            # генерация dataset_id
 │   └── reporting/
 │       └── formatter.py             # вывод, прогресс tqdm, уведомление о baseline
 └── tests/

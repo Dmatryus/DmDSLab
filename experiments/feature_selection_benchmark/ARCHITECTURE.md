@@ -1,6 +1,7 @@
 # ARCHITECTURE.md — feature_selection_benchmark
 
 > **Edit log:**
+> - 2026-05-17 · v0.3.0 · release v0.2.0 · §2 — карта пакета дополнена `storage/dataset_id.py`
 > - 2026-05-16 · v0.3.0 · architecture-interviewer · создан
 
 ## 1. Stack
@@ -51,7 +52,8 @@ experiments/feature_selection_benchmark/
 │   ├── storage/
 │   │   ├── db.py                          # SQLite-соединение, миграции схемы
 │   │   ├── leaderboard.py                 # локальный + глобальный лидерборд: чтение/запись/ранжирование
-│   │   └── checkpoint.py                  # сохранение / загрузка состояния прогона
+│   │   ├── checkpoint.py                  # сохранение / загрузка состояния прогона
+│   │   └── dataset_id.py                  # генерация dataset_id для записей лидерборда
 │   └── reporting/
 │       └── formatter.py                   # форматирование вывода, ранжирование, tqdm-прогресс, уведомление о baseline
 │   gui/                                   # Should-уровень, отдельный слой поверх storage и core

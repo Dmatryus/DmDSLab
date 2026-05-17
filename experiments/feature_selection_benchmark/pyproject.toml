@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "feature_selection_benchmark"
-version = "0.3.0"
+version = "0.4.0"
 description = "Benchmark of feature selection methods: runs filter / wrapper / embedded / SHAP-based methods and returns a ranked leaderboard."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,6 +26,7 @@ dependencies = [
     "numpy~=1.26",
     "pandas~=2.2",
     "scikit-learn~=1.4",
+    "optuna~=4.8",
     "joblib~=1.3",
     "tqdm~=4.66",
     "tqdm_joblib~=0.0.4",

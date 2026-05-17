@@ -5,6 +5,51 @@ All notable changes to `feature_selection_benchmark` are documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-17
+
+Эпик E-006 (Functional): реализовано ядро оркестрации — кросс-валидация
+FS-метода, подбор гиперпараметров через Optuna и checkpointing состояния
+прогона. Заглушки `core/orchestrator.py`, `core/tuning.py` и
+`storage/checkpoint.py` заменены рабочей реализацией.
+
+### Added
+
+- `CVRunner` (`core/orchestrator.py`) — кросс-валидация FS-метода: прогоняет
+  метод на фолдах и оценивает отобранные признаки прокси-оценщиком. Прокси-модель
+  выбирается параметром `estimator` (`"catboost"` | `"random_forest"` | `None` —
+  авто); метрики: accuracy (классификация), R² (регрессия), обе «больше=лучше».
+- `tune_hyperparams` (`core/tuning.py`) — подбор гиперпараметров FS-метода
+  через Optuna TPE согласно ADR `docs/adr/0002-hyperparameter-tuning-strategy.md`.
+  Бюджет задаётся `n_trials`; при `n_trials=0` — fallback на дефолты. Параметры
+  `cv` и `estimator` пробрасываются во внутренний `CVRunner`.
+- `storage/checkpoint.py` — `CheckpointState`, `save_checkpoint`,
+  `load_checkpoint`, `resolve_run_id`: сохранение и загрузка состояния прогона,
+  возобновление после прерывания. `partial_results` хранятся в JSON-файле
+  состояния.
+- Зависимость `optuna~=4.8` добавлена в core-зависимости `pyproject.toml`
+  (нужна `tune_hyperparams`; устанавливается базовым `pip install`).
+- `tests/conftest.py` — общие фикстуры датасетов для тестов оркестрации и
+  подбора гиперпараметров.
+
+### Changed
+
+- Заглушки `core/orchestrator.py`, `core/tuning.py` и `storage/checkpoint.py`,
+  ранее бросавшие `NotImplementedError`, заменены рабочей реализацией.
+
+### Known Limitations
+
+- Методы `mrmr`, `boruta`, `shap_importance`, `null_importance` зависят от
+  опциональных пакетов extra `[methods]` — в тестовой среде эти пакеты не
+  установлены, соответствующие пути не верифицированы исполнением (6
+  skipped-тестов, graceful degradation через `FSMethod.check_availability()`).
+- Оценка подобранных гиперпараметров имеет оптимистичное смещение: подбор и
+  итоговая оценка идут по одной и той же CV-схеме (зафиксировано в ADR
+  `docs/adr/0002-hyperparameter-tuning-strategy.md`).
+- Ядро оркестрации ещё не подключено к публичному `run_benchmark` — API-слой
+  (`api.py`) остаётся заглушкой; интеграция — эпик E-004.
+- Хранилище и лидерборды (SQLite) — заглушки; `checkpoint.py` пока не
+  интегрирован с `storage/db.py`; реализация — эпик E-007.
+
 ## [0.3.0] - 2026-05-17
 
 Эпик E-005 (Functional): поставлен реестр FS-методов и реализованы все
@@ -146,6 +191,7 @@ migration-note — `.task/migration-v0.3.0.md`.
   поскольку конфиг лежит в подкаталоге пакета, а не в корне монорепо
   (отражено в README Contributing).
 
+[0.4.0]: https://github.com/Dmatryus/DmDSLab/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Dmatryus/DmDSLab/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Dmatryus/DmDSLab/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Dmatryus/DmDSLab/releases/tag/v0.1.0

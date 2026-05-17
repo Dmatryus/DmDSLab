@@ -27,8 +27,8 @@ null importance и другие — и возвращает ранжирован
 
 ## Статус
 
-> **В разработке.** Реализованы слой FS-методов и реестр; ядро
-> оркестрации, хранилище и API-слой пока остаются заглушками.
+> **В разработке.** Реализованы слой FS-методов, реестр и ядро
+> оркестрации; API-слой и хранилище пока остаются заглушками.
 
 Что уже реализовано:
 
@@ -40,14 +40,21 @@ null importance и другие — и возвращает ранжирован
   built-in методов при импорте пакета, graceful degradation для методов
   с отсутствующими опц. зависимостями;
 - **все 14 FS-методов** четырёх групп — filter, wrapper, embedded,
-  shap (включая permutation importance).
+  shap (включая permutation importance);
+- **ядро оркестрации** (эпик E-006) — `CVRunner` (кросс-валидация с
+  прокси-оценкой), `tune_hyperparams` (подбор гиперпараметров через
+  Optuna) и `storage/checkpoint.py` (checkpointing).
 
 Ещё является заглушкой (поднимает `NotImplementedError`):
 
 - `run_benchmark` и API-слой валидации (эпик E-004);
-- ядро оркестрации — CV, подбор гиперпараметров, checkpointing
-  (эпик E-006);
 - хранилище — SQLite, лидерборд (эпик E-007).
+
+### Known Limitations
+
+- 6 тестов помечены `skip` — проверки graceful degradation FS-методов
+  при неустановленном extra `[methods]`; запускаются только в окружении
+  с установленными опц. зависимостями.
 
 ## Требования
 
@@ -62,7 +69,7 @@ null importance и другие — и возвращает ранжирован
 `feature_selection_benchmark`. Установка через `pip` в режиме editable.
 
 **Core-каркас** (`numpy`, `pandas`, `scikit-learn`, `joblib`, `tqdm`,
-`tqdm_joblib`):
+`tqdm_joblib`, `optuna`):
 
 ```bash
 pip install -e "experiments/feature_selection_benchmark"
@@ -98,10 +105,11 @@ Core-каркас (`pip install -e "experiments/feature_selection_benchmark"`)
 
 ## Quickstart
 
-> Приведённый пример отражает целевой API. Слой FS-методов и реестр уже
-> реализованы, но `run_benchmark` пока остаётся заглушкой, поднимающей
-> `NotImplementedError`. Пример показывает, как вызов будет выглядеть
-> после реализации API-слоя и оркестрации (эпики E-004, E-006, E-007).
+> Приведённый пример отражает целевой API. Слой FS-методов, реестр и
+> ядро оркестрации уже реализованы, но `run_benchmark` пока остаётся
+> заглушкой, поднимающей `NotImplementedError`. Пример показывает, как
+> вызов будет выглядеть после реализации API-слоя и хранилища
+> (эпики E-004, E-007).
 
 ```python
 from feature_selection_benchmark import run_benchmark, Dataset

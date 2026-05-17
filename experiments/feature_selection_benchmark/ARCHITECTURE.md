@@ -1,6 +1,7 @@
 # ARCHITECTURE.md — feature_selection_benchmark
 
 > **Edit log:**
+> - 2026-05-17 · v0.3.0 · execution-agent · §4 — задокументирован параметр `estimator` конструктора `CVRunner` (PR-3)
 > - 2026-05-17 · v0.3.0 · execution-agent · §2 — карта пакета дополнена `methods/_utils.py`; §4 — документированы `FSMethod.check_availability()` и `HyperParam` (PR-5, PR-6)
 > - 2026-05-17 · v0.3.0 · release v0.2.0 · §2 — карта пакета дополнена `storage/dataset_id.py`
 > - 2026-05-16 · v0.3.0 · architecture-interviewer · создан
@@ -240,7 +241,31 @@ Optuna. Словарь `имя → HyperParam` попадает в `MethodInfo.h
 `core/tuning.py` (E-006) транслирует `kind` в соответствующий вызов
 `trial.suggest_*`. См. ADR 0002.
 
-### Структура результата
+### Ядро оркестрации — CVRunner (внутренний контракт E-006)
+
+`core/orchestrator.py` экспортирует класс `CVRunner` — кросс-валидацию
+FS-методов с прокси-оценкой. Класс объявлен в `__all__` модуля и служит
+контрактом для интеграции в API-слой (E-004).
+
+```python
+class CVRunner:
+    def __init__(
+        self,
+        cv: int = 5,
+        random_seed: int | None = None,
+        estimator: str | None = None,
+        # выбор прокси-модели-оценщика:
+        #   "catboost"      → CatBoost (требует опц. пакет catboost)
+        #   "random_forest" → RandomForest из scikit-learn
+        #   None            → авто: CatBoost при наличии пакета,
+        #                     иначе fallback на RandomForest
+    ) -> None:
+        ...
+```
+
+`estimator` управляет тем, какой моделью `CVRunner` оценивает качество
+наборов признаков на CV-фолдах. При явном `"catboost"` без установленного
+пакета поднимается `ImportError`; недопустимое значение → `ValueError`.
 
 ```python
 @dataclass

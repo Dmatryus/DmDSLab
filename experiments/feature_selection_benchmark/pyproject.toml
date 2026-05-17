@@ -52,3 +52,35 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["feature_selection_benchmark*"]
 namespaces = false
+
+# --- Linting & formatting -------------------------------------------------
+# Ruff covers linting + import sorting (rule group `I`, replaces isort) +
+# formatting. Target Python 3.10 to match `requires-python`.
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+src = ["feature_selection_benchmark", "tests"]
+
+[tool.ruff.lint]
+# E/W  — pycodestyle, F — pyflakes, I — isort (import sorting),
+# UP   — pyupgrade, B — flake8-bugbear.
+select = ["E", "W", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["feature_selection_benchmark"]
+
+# --- Static type checking -------------------------------------------------
+# Strictness tuned for the scaffold: stub bodies are `raise NotImplementedError`,
+# so `no-implicit-reexport` / unreachable-style checks would yield false
+# positives. `warn_no_return` is disabled because typed stubs declare a return
+# type but never return — that is intentional at the scaffold stage (plan R-5).
+[tool.mypy]
+python_version = "3.10"
+files = ["feature_selection_benchmark"]
+ignore_missing_imports = true
+warn_no_return = false
+warn_unreachable = false
+warn_return_any = false
+check_untyped_defs = true
+no_implicit_optional = true
+show_error_codes = true

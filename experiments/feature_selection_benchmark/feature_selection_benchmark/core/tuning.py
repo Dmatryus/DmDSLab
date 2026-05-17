@@ -68,6 +68,8 @@ def tune_hyperparams(
     dataset: Dataset,
     n_trials: int = 20,
     random_seed: int | None = None,
+    cv: int = 5,
+    estimator: str | None = None,
 ) -> dict[str, object]:
     """Подбирает гиперпараметры FS-метода на датасете.
 
@@ -93,6 +95,13 @@ def tune_hyperparams(
         n_trials: Число итераций подбора. ``0`` — режим дефолтов без study.
         random_seed: Зерно случайности для воспроизводимости — сидирует
             `TPESampler` и `CVRunner` (фолды, прокси-модель).
+        cv: Число фолдов кросс-валидации внутри objective — пробрасывается
+            в `CVRunner`. Должно совпадать с `cv` итогового прогона, иначе
+            best_params подбираются на ином числе фолдов (оптимистическое
+            смещение).
+        estimator: Прокси-модель `CVRunner` (``"catboost"`` /
+            ``"random_forest"``); ``None`` — авто-разрешение. Пробрасывается
+            в `CVRunner`.
 
     Returns:
         Словарь лучших найденных гиперпараметров (``имя → значение``).
@@ -110,7 +119,7 @@ def tune_hyperparams(
             name: param.default for name, param in search_space.items()
         }
 
-    runner = CVRunner(random_seed=random_seed)
+    runner = CVRunner(cv=cv, random_seed=random_seed, estimator=estimator)
 
     def objective(trial: optuna.Trial) -> float:
         """Сэмплирует гиперпараметры и возвращает CV-оценку набора признаков.

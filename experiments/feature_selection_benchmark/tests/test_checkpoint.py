@@ -115,6 +115,14 @@ def test_save_checkpoint_writes_file_in_checkpoint_dir(
     assert state.checkpoint_path.parent == tmp_path
 
 
+def _checkpoint_cleanup_path(run_id: str):
+    """Путь к временному файлу checkpoint для очистки после теста."""
+    import tempfile
+    from pathlib import Path
+
+    return Path(tempfile.gettempdir()) / f"checkpoint_{run_id}.json"
+
+
 def test_save_checkpoint_default_dir_is_temp(conn: sqlite3.Connection) -> None:
     """При ``checkpoint_dir=None`` файл пишется во временную системную папку."""
     import tempfile
@@ -131,14 +139,6 @@ def test_save_checkpoint_default_dir_is_temp(conn: sqlite3.Connection) -> None:
         path = _checkpoint_cleanup_path("hash-temp")
         if path.exists():
             path.unlink()
-
-
-def _checkpoint_cleanup_path(run_id: str):
-    """Путь к временному файлу checkpoint для очистки после теста."""
-    import tempfile
-    from pathlib import Path
-
-    return Path(tempfile.gettempdir()) / f"checkpoint_{run_id}.json"
 
 
 # --- многометодный прогон / восстановление ----------------------------------

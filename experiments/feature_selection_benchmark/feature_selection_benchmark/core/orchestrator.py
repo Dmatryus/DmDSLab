@@ -179,7 +179,9 @@ class CVRunner:
         scores = np.asarray(fold_scores, dtype=float)
         return CVResult(
             cv_score=float(scores.mean()),
-            score_std=float(scores.std()),
+            # ddof=1 — выборочное (несмещённое) СКО по cv фолдам:
+            # конвенционально для отчётности std-по-фолдам (лидерборд E-007).
+            score_std=float(scores.std(ddof=1)),
             selected_features=last_selected,
             duration_sec=time.perf_counter() - start,
         )

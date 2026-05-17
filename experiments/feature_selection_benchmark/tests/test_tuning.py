@@ -18,11 +18,11 @@
 
 from __future__ import annotations
 
-import numpy as np
 import optuna
 import pandas as pd
 import pytest
 
+import feature_selection_benchmark.core.tuning as tuning_module
 from feature_selection_benchmark.api import Dataset
 from feature_selection_benchmark.core.tuning import tune_hyperparams
 from feature_selection_benchmark.methods.base import FSMethod, MethodInfo
@@ -34,29 +34,6 @@ from feature_selection_benchmark.methods.filter_methods import (
 
 # Optuna-логи (INFO по trial'у) — лишний шум в выводе тестов.
 optuna.logging.set_verbosity(optuna.logging.WARNING)
-
-
-# --- Фикстуры данных --------------------------------------------------------
-
-
-@pytest.fixture
-def classification_dataset() -> Dataset:
-    """Синтетический датасет классификации: informative + noise + const."""
-    rng = np.random.default_rng(42)
-    n = 200
-    y = rng.integers(0, 2, size=n)
-    df = pd.DataFrame(
-        {
-            "informative_a": y + rng.normal(0, 0.3, n),
-            "informative_b": y * 2.0 + rng.normal(0, 0.4, n),
-            "noise_a": rng.normal(0, 1, n),
-            "noise_b": rng.normal(0, 1, n),
-            "const": np.zeros(n),
-            "target": y,
-        }
-    )
-    features = ["informative_a", "informative_b", "noise_a", "noise_b", "const"]
-    return Dataset(data=df, features_list=features, target="target")
 
 
 # --- n_trials=0 → дефолты ---------------------------------------------------
@@ -209,3 +186,33 @@ def test_different_seed_may_differ(
         random_seed=999,
     )
     assert set(best) == {"method", "k"}
+
+
+# --- Проброс cv / estimator в CVRunner (R-1) --------------------------------
+
+
+def test_cv_and_estimator_passed_to_cvrunner(
+    classification_dataset: Dataset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`cv` и `estimator` пробрасываются в создаваемый `CVRunner`."""
+    captured: dict[str, object] = {}
+    real_cvrunner = tuning_module.CVRunner
+
+    def spy_cvrunner(*args: object, **kwargs: object) -> object:
+        captured.update(kwargs)
+        return real_cvrunner(*args, **kwargs)
+
+    monkeypatch.setattr(tuning_module, "CVRunner", spy_cvrunner)
+
+    tune_hyperparams(
+        MutualInformationMethod(),
+        classification_dataset,
+        n_trials=3,
+        random_seed=42,
+        cv=3,
+        estimator="random_forest",
+    )
+
+    assert captured["cv"] == 3
+    assert captured["estimator"] == "random_forest"
+    assert captured["random_seed"] == 42

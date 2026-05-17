@@ -5,6 +5,77 @@ All notable changes to `feature_selection_benchmark` are documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-05-17
+
+Эпик E-005 (Functional): поставлен реестр FS-методов и реализованы все
+14 built-in методов четырёх групп (filter / wrapper / embedded / SHAP +
+permutation). Импорт пакета автоматически регистрирует все методы.
+
+### Added
+
+- 14 реализованных FS-методов в `methods/{filter,wrapper,embedded,shap}_methods.py`,
+  покрывающих группы filter, wrapper, embedded и SHAP/permutation. Каждый метод
+  объявляет `MethodInfo` и декларативное пространство поиска гиперпараметров
+  согласно ADR `docs/adr/0002-hyperparameter-tuning-strategy.md`.
+- Реестр методов `methods/registry.py` — `register`, `get_method`,
+  `list_registered`, `is_registered`, `default_method_names`; built-in методы
+  саморегистрируются при импорте подпакета.
+- Тип `HyperParam` — дескриптор пространства поиска одного гиперпараметра
+  (`kind`, `default`, границы), используется методами при объявлении
+  `MethodInfo.hyperparameters`.
+- `FSMethod.check_availability()` — classmethod, проверяющий наличие опциональных
+  зависимостей метода; даёт graceful degradation при отсутствии extra `[methods]`.
+- Модуль `methods/_utils.py` — утилиты методов, в том числе каноническая
+  функция `is_classification` (единое определение типа задачи для всех групп).
+- Реэкспорт `HyperParam`, `FSMethod`, `MethodInfo` из корневого
+  `feature_selection_benchmark/__init__.py` — публичный API для разработчиков
+  FS-методов (Персона 2).
+- Тесты `tests/test_methods/` — `test_filter.py`, `test_wrapper.py`,
+  `test_embedded.py`, `test_shap.py`.
+
+### Changed
+
+- **Breaking.** `MethodInfo.hyperparameters` сменил тип с `dict[str, Any]` на
+  `dict[str, HyperParam]`. Код, конструирующий `MethodInfo` напрямую с
+  произвольными значениями в `hyperparameters`, несовместим с новым контрактом
+  и функциями реестра — см. раздел Migration ниже.
+- `MethodInfo` расширен 4 полями с дефолтами (`group`, `supported_tasks`,
+  `available`, `unavailable_reason`) — обратно совместимо для конструктора.
+
+### Migration
+
+`MethodInfo.hyperparameters` теперь типизирован как `dict[str, HyperParam]`.
+
+При создании `MethodInfo` вручную замените произвольные значения в
+`hyperparameters` на экземпляры `HyperParam`:
+
+```python
+# Было (0.2.0 и ранее):
+MethodInfo(name="my_method", hyperparameters={"k": 10})
+
+# Стало (0.3.0):
+from feature_selection_benchmark import HyperParam
+MethodInfo(name="my_method", hyperparameters={"k": HyperParam(kind="int", default=10)})
+```
+
+Старый `dict[str, Any]` несовместим с новыми функциями реестра. Подробная
+migration-note — `.task/migration-v0.3.0.md`.
+
+### Known Limitations
+
+- Методы `mrmr`, `boruta`, `shap_importance`, `null_importance` зависят от
+  опциональных пакетов extra `[methods]` (`shap`, `BorutaShap`,
+  `mrmr-selection`, `target-permutation-importances`). В тестовой среде эти
+  пакеты не установлены — соответствующие пути `fit_select` не верифицированы
+  исполнением (5 skipped-тестов, graceful degradation через
+  `FSMethod.check_availability()`). Реальный прогон требует CI с extra
+  `[methods]`.
+- `run_benchmark` и API-слой (`api.py`) — ещё заглушки, бросают
+  `NotImplementedError`; реализация — эпик E-004.
+- Ядро оркестрации (CV, подбор гиперпараметров, checkpointing) — заглушки;
+  реализация — эпик E-006.
+- Хранилище и лидерборды (SQLite) — заглушки; реализация — эпик E-007.
+
 ## [0.2.0] - 2026-05-17
 
 Эпик E-002 (Research): зафиксирована стратегия идентификации записей
@@ -75,5 +146,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   поскольку конфиг лежит в подкаталоге пакета, а не в корне монорепо
   (отражено в README Contributing).
 
+[0.3.0]: https://github.com/Dmatryus/DmDSLab/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Dmatryus/DmDSLab/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Dmatryus/DmDSLab/releases/tag/v0.1.0

@@ -39,6 +39,8 @@ SUBMODULES = [
 ]
 
 # Публичные имена, реэкспортируемые корневым __init__.py.
+# E-005 добавил `HyperParam` — declarative-контракт гиперпараметров,
+# нужный Персоне 2 при объявлении нового FS-метода (review PR-3).
 PUBLIC_NAMES = [
     "run_benchmark",
     "get_leaderboard",
@@ -48,6 +50,7 @@ PUBLIC_NAMES = [
     "BenchmarkResult",
     "FSMethod",
     "MethodInfo",
+    "HyperParam",
 ]
 
 # Поля датакласса MethodInfo. Базовые 6 зафиксированы каркасом E-001.3
@@ -91,7 +94,7 @@ def test_submodule_imports(submodule: str) -> None:
 
 
 def test_public_api_in_all() -> None:
-    """`__all__` корневого пакета содержит ровно 8 публичных имён."""
+    """`__all__` корневого пакета содержит ровно ожидаемые публичные имена."""
     import feature_selection_benchmark as fsb
 
     assert set(fsb.__all__) == set(PUBLIC_NAMES)

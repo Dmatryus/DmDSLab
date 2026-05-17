@@ -1,6 +1,7 @@
 # ARCHITECTURE.md — feature_selection_benchmark
 
 > **Edit log:**
+> - 2026-05-17 · v0.3.0 · execution-agent · §2 — карта пакета дополнена `methods/_utils.py`; §4 — документированы `FSMethod.check_availability()` и `HyperParam` (PR-5, PR-6)
 > - 2026-05-17 · v0.3.0 · release v0.2.0 · §2 — карта пакета дополнена `storage/dataset_id.py`
 > - 2026-05-16 · v0.3.0 · architecture-interviewer · создан
 
@@ -43,8 +44,9 @@ experiments/feature_selection_benchmark/
 │   │   ├── tuning.py                     # подбор гиперпараметров FS-методов
 │   │   └── reproducibility.py            # фиксация random_seed, детерминированная сортировка по id
 │   ├── methods/
-│   │   ├── registry.py                   # реестр FS-методов: name → (callable, group, supported_tasks)
-│   │   ├── base.py                       # базовый класс FSMethod — интерфейс для всех методов
+│   │   ├── registry.py                   # реестр FS-методов: name → (FSMethod, group, supported_tasks)
+│   │   ├── base.py                       # базовый класс FSMethod, контракты HyperParam / MethodInfo
+│   │   ├── _utils.py                     # общие хелперы методов: is_classification (каноническое определение типа задачи)
 │   │   ├── filter_methods.py             # VarianceThreshold, Pearson/Spearman, MI, mRMR, IV/WoE и др.
 │   │   ├── wrapper_methods.py             # RFE/RFECV, SequentialFeatureSelector, Boruta, BorutaShap, Stability Selection
 │   │   ├── embedded_methods.py            # Lasso/ElasticNet, CatBoost.select_features, tree gain importance
@@ -210,7 +212,33 @@ class FSMethod(ABC):
     ) -> list[str]:
         """Возвращает список отобранных имён признаков."""
         ...
+
+    @classmethod
+    def check_availability(cls) -> str | None:
+        """Проверяет наличие опц. зависимостей метода.
+
+        Хук для методов с тяжёлыми опц. пакетами (shap, boruta,
+        catboost и др.). Метод переопределяет classmethod и возвращает
+        строку-причину, если зависимость не установлена. Базовая
+        реализация считает метод всегда доступным (возвращает None).
+
+        Недоступный метод всё равно регистрируется (виден в
+        list_methods со статусом available=False), но исключается из
+        дефолтного набора прогона methods=None (ADR 0002, OQ-2).
+        """
+        return None
 ```
+
+**check_availability()** — необязательный хук контракта Персоны 2.
+Переопределять нужно только если метод зависит от опционального пакета
+из extra `[methods]`; иначе достаточно базовой реализации.
+
+**HyperParam** — declarative-дескриптор одного гиперпараметра. Метод
+объявляет пространство поиска как данные (`kind` ∈ `"int"` | `"float"` |
+`"categorical"`, `default`, `low`, `high`, `log`), без зависимости от
+Optuna. Словарь `имя → HyperParam` попадает в `MethodInfo.hyperparameters`;
+`core/tuning.py` (E-006) транслирует `kind` в соответствующий вызов
+`trial.suggest_*`. См. ADR 0002.
 
 ### Структура результата
 

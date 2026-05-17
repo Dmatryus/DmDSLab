@@ -34,8 +34,10 @@ __all__ = [
     "list_registered",
     "is_registered",
     "default_method_names",
-    "clear_registry",
 ]
+# `clear_registry` намеренно НЕ в `__all__`: служебный хелпер для
+# изоляции тестов, не часть публичного API. Тесты импортируют его явно
+# (`registry.clear_registry`).
 
 
 @dataclass

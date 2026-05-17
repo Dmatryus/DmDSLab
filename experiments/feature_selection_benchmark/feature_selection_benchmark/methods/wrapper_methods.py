@@ -175,7 +175,11 @@ class RFEMethod(FSMethod):
         )
         selector.fit(X_train, y_train)
         mask = selector.get_support()
-        return [c for c, keep in zip(X_train.columns, mask) if keep]
+        return [
+            c
+            for c, keep in zip(X_train.columns, mask, strict=True)
+            if keep
+        ]
 
 
 class SequentialFeatureSelectorMethod(FSMethod):
@@ -252,7 +256,11 @@ class SequentialFeatureSelectorMethod(FSMethod):
         )
         selector.fit(X_train, y_train)
         mask = selector.get_support()
-        return [c for c, keep in zip(X_train.columns, mask) if keep]
+        return [
+            c
+            for c, keep in zip(X_train.columns, mask, strict=True)
+            if keep
+        ]
 
 
 class BorutaMethod(FSMethod):
@@ -353,12 +361,16 @@ class BorutaMethod(FSMethod):
 
         columns = list(X_train.columns)
         confirmed = [
-            c for c, keep in zip(columns, selector.support_) if keep
+            c
+            for c, keep in zip(columns, selector.support_, strict=True)
+            if keep
         ]
         if include_tentative:
             confirmed += [
                 c
-                for c, keep in zip(columns, selector.support_weak_)
+                for c, keep in zip(
+                    columns, selector.support_weak_, strict=True
+                )
                 if keep
             ]
         return confirmed if confirmed else columns
@@ -460,7 +472,7 @@ class StabilitySelectionMethod(FSMethod):
         frequencies = counts / n_bootstrap
         selected = [
             c
-            for c, freq in zip(columns, frequencies)
+            for c, freq in zip(columns, frequencies, strict=True)
             if freq >= threshold
         ]
         if selected:
